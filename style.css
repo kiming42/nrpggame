@@ -876,3 +876,16 @@ canvas {
     z-index: 5 !important;
     cursor: pointer !important;
 }
+
+/* 🌟 強制遊戲畫布 100% 貼合手機視窗，嚴禁 cover 裁切上下左右邊界！ */
+#game-container, #canvas-wrapper {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    overflow: hidden !important;
+}
+
+#gameCanvas {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: fill !important;
+}
