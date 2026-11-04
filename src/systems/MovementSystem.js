@@ -97,8 +97,13 @@ export class MovementSystem {
 
                 const cols = currentMap.cols || 15;
                 const rows = currentMap.rows || 15;
-                const tapCol = Math.floor(((clientX - rect.left) / rect.width) * cols);
-                const tapRow = Math.floor(((clientY - rect.top) / rect.height) * rows);
+// 🌟 請將 src/systems/MovementSystem.js 內 handleCanvasTap 的 tapCol / tapRow 計算改為以下 6 行：
+                const viewW = this.gameState.viewWidth || 480;
+                const viewH = this.gameState.viewHeight || 320;
+                const camX = this.gameState.cameraX || 0;
+                const camY = this.gameState.cameraY || 0;
+                const tapCol = Math.floor((((clientX - rect.left) / rect.width) * viewW + camX) / 32);
+                const tapRow = Math.floor((((clientY - rect.top) / rect.height) * viewH + camY) / 32);
 
                 const dCol = tapCol - player.col;
                 const dRow = tapRow - player.row;
