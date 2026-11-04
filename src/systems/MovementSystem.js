@@ -1,4 +1,6 @@
 // src/systems/MovementSystem.js
+// 🌟 手機觸控完美修復版 (維持原版輕鬆採集設定，支援虛擬方向鍵長按連走 + 直接點擊螢幕地圖移動與採集)
+
 import { eventBus } from '../core/EventBus.js';
 import { Items } from '../data/items.js';
 import { GatheringTools, GatheringFormulas, getRegionNodeConfig } from '../data/worldNodes.js';
@@ -10,12 +12,150 @@ export class MovementSystem {
         this.buildItems = ['wood_plank', 'stone_wall', 'farm_plot', 'recycler', 'fossil_rex', 'golden_compass'];
         this.buildTileIds = { 'wood_plank': 20, 'stone_wall': 21, 'farm_plot': 12, 'recycler': 24, 'fossil_rex': 22, 'golden_compass': 23 };
         this.selectedQuickFoodId = 'cooked_fish';
+        this.holdMoveInterval = null;
+
         this.bindKeys();
+        this.bindMobileTouchAndCanvasTap();
         this.bindQuickFoodEvents();
         setTimeout(() => this.updateContextActionUI(), 200);
     }
 
-    // 🌟 影片 00:44 處：右下角食物快捷方塊與 2x2 彈出選擇框
+    // 🌟 徹底修復手機虛擬方向鍵、大圓鈕與「直接點擊螢幕畫面移動」
+    bindMobileTouchAndCanvasTap() {
+        const stopHoldMove = () => {
+            if (this.holdMoveInterval) {
+                clearInterval(this.holdMoveInterval);
+                this.holdMoveInterval = null;
+            }
+        };
+
+        ['up', 'down', 'left', 'right'].forEach(dir => {
+            const btn = document.getElementById(`btn-${dir}`);
+            if (!btn) return;
+
+            // 清除舊的 onclick 避免衝突，改用原生 pointerdown / touchstart 並支援按住連走
+            btn.onmousedown = null;
+            btn.ontouchstart = null;
+
+            const startMove = (e) => {
+                if (e.cancelable) e.preventDefault();
+                e.stopPropagation();
+                this.handleMove(dir);
+                stopHoldMove();
+                this.holdMoveInterval = setInterval(() => {
+                    this.handleMove(dir);
+                }, 190);
+            };
+
+            btn.addEventListener('touchstart', startMove, { passive: false });
+            btn.addEventListener('mousedown', startMove);
+            btn.addEventListener('touchend', stopHoldMove);
+            btn.addEventListener('touchcancel', stopHoldMove);
+            btn.addEventListener('mouseup', stopHoldMove);
+            btn.addEventListener('mouseleave', stopHoldMove);
+        });
+
+        // 右下角互動大圓鈕觸控確保
+        const actBtn = document.getElementById('btn-action');
+        if (actBtn) {
+            actBtn.onmousedown = null;
+            actBtn.ontouchstart = null;
+            const triggerAct = (e) => {
+                if (e.cancelable) e.preventDefault();
+                e.stopPropagation();
+                const dialogLayer = document.getElementById('pixel-dialog-layer');
+                if (dialogLayer && dialogLayer.style.display === 'flex') {
+                    document.getElementById('btn-dialog-ok')?.click();
+                    return;
+                }
+                if (this.gameState.currentState === 'FISHING') {
+                    eventBus.emit('CATCH_FISH_NOW');
+                    return;
+                }
+                this.interact();
+            };
+            actBtn.addEventListener('touchstart', triggerAct, { passive: false });
+            actBtn.addEventListener('mousedown', triggerAct);
+        }
+
+        // 🌟 新增：手指直接點擊遊戲畫面 (Canvas) 即可朝該方向移動，點擊身邊物件直接採集！
+        const canvas = document.getElementById('gameCanvas');
+        if (canvas) {
+            const handleCanvasTap = (clientX, clientY) => {
+                // 若有彈出選單則不觸發
+                const popup = document.getElementById('quick-food-popup');
+                if (popup && popup.style.display === 'block') {
+                    popup.style.display = 'none';
+                    return;
+                }
+
+                const rect = canvas.getBoundingClientRect();
+                if (!rect.width || !rect.height) return;
+
+                const { player, currentMap } = this.gameState;
+                if (!player || !currentMap) return;
+
+                const cols = currentMap.cols || 15;
+                const rows = currentMap.rows || 15;
+                const tapCol = Math.floor(((clientX - rect.left) / rect.width) * cols);
+                const tapRow = Math.floor(((clientY - rect.top) / rect.height) * rows);
+
+                const dCol = tapCol - player.col;
+                const dRow = tapRow - player.row;
+
+                // 點擊角色自己腳下 -> 直接觸發面向方向的互動
+                if (dCol === 0 && dRow === 0) {
+                    this.interact();
+                    return;
+                }
+
+                // 點擊上下左右緊鄰的 1 格：若是樹/石頭/寶箱/NPC 等不可行走物件，自動轉向並直接採集！
+                if (Math.abs(dCol) + Math.abs(dRow) === 1) {
+                    const dir = dCol === 1 ? 'right' : (dCol === -1 ? 'left' : (dRow === 1 ? 'down' : 'up'));
+                    player.direction = dir;
+                    const targetTile = currentMap.tiles[tapRow]?.[tapCol];
+                    const walkableTiles = [0, 2, 7, 11, 12, 13, 14, 15, 18, 20, 30, 31, 32, 33, 34, 40, 42, 45];
+                    if (!walkableTiles.includes(targetTile) || [14, 15].includes(targetTile)) {
+                        this.updateContextActionUI();
+                        this.interact();
+                        return;
+                    }
+                    this.handleMove(dir);
+                    return;
+                }
+
+                // 點擊較遠處：朝差距較大的軸向移動一步
+                let primaryDir = null;
+                let secondaryDir = null;
+                if (Math.abs(dCol) >= Math.abs(dRow)) {
+                    primaryDir = dCol > 0 ? 'right' : 'left';
+                    if (dRow !== 0) secondaryDir = dRow > 0 ? 'down' : 'up';
+                } else {
+                    primaryDir = dRow > 0 ? 'down' : 'up';
+                    if (dCol !== 0) secondaryDir = dCol > 0 ? 'right' : 'left';
+                }
+
+                const oldCol = player.col, oldRow = player.row;
+                this.handleMove(primaryDir);
+                // 若主方向被樹或石頭擋住沒能移動，自動嘗試次方向繞路
+                if (player.col === oldCol && player.row === oldRow && secondaryDir) {
+                    this.handleMove(secondaryDir);
+                }
+            };
+
+            canvas.addEventListener('touchstart', (e) => {
+                if (e.touches && e.touches.length === 1) {
+                    if (e.cancelable) e.preventDefault();
+                    handleCanvasTap(e.touches[0].clientX, e.touches[0].clientY);
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('mousedown', (e) => {
+                handleCanvasTap(e.clientX, e.clientY);
+            });
+        }
+    }
+
     bindQuickFoodEvents() {
         const foodBtn = document.getElementById('btn-quick-food');
         const popup = document.getElementById('quick-food-popup');
@@ -31,6 +171,7 @@ export class MovementSystem {
         if (foodBtn) {
             foodBtn.onclick = (e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 if (popup && popup.style.display === 'block') {
                     this.consumeSelectedQuickFood();
                     popup.style.display = 'none';
@@ -110,12 +251,10 @@ export class MovementSystem {
         this.updateContextActionUI();
     }
 
-    // 🌟 100% 還原影片右下角：根據角色面向的格子，即時切換大圓鈕圖示（斧頭 / 十字鎬 / 釣竿 / 手掌 / 寶劍 / 鐵鏟）
     updateContextActionUI() {
         const { player, currentMap } = this.gameState;
         if (!player || !currentMap) return;
 
-        // 1. 更新食物快捷方塊
         const avail = this.getAvailableFoods();
         if (!player.inventory[this.selectedQuickFoodId] && avail.length > 0) {
             this.selectedQuickFoodId = avail[0];
@@ -126,7 +265,6 @@ export class MovementSystem {
         if (fIconEl && curFoodItem) fIconEl.innerHTML = getPixelIconHtml(curFoodItem.sprite || 'fish_icon', 26);
         if (fCntEl) fCntEl.innerText = player.inventory[this.selectedQuickFoodId] || 0;
 
-        // 2. 偵測正前方格子的類型，動態改變大圓鈕圖示
         const actIcoEl = document.getElementById('dynamic-action-icon');
         if (!actIcoEl) return;
 
@@ -142,25 +280,18 @@ export class MovementSystem {
         }
 
         if (targetTile === 1 || targetTile === 17) {
-            // 面向樹木 -> 顯示斧頭
             actIcoEl.innerHTML = getPixelIconHtml('axe_icon', 34);
         } else if ([3, 4, 8, 19, 46, 47, 48, 49].includes(targetTile)) {
-            // 面向岩石/礦脈/晶簇 -> 顯示十字鎬
             actIcoEl.innerHTML = getPixelIconHtml('pickaxe', 34);
         } else if ([7, 16, 40].includes(targetTile)) {
-            // 面向水面 -> 顯示釣竿
             actIcoEl.innerHTML = getPixelIconHtml('rod_icon', 34);
         } else if ([15, 41, 9, 43, 14, 50].includes(targetTile)) {
-            // 面向草藥/寶箱/農作物 -> 顯示手掌拾取
             actIcoEl.innerHTML = getPixelIconHtml('hand_icon', 34);
         } else if ([5, 51].includes(targetTile)) {
-            // 面向首領或試煉碑 -> 顯示寶劍
             actIcoEl.innerHTML = getPixelIconHtml('sword', 34);
         } else if (targetTile === 0 && (player.equipment.includes('shovel') || player.equipment.includes('steel_shovel') || (player.inventory['steel_shovel'] || 0) > 0)) {
-            // 面向空地且持有鐵鏟 -> 顯示鐵鏟挖掘
             actIcoEl.innerHTML = getPixelIconHtml('shovel_icon', 32);
         } else {
-            // 預設待機 -> 顯示手掌
             actIcoEl.innerHTML = `<span style="opacity:0.45;">${getPixelIconHtml('hand_icon', 30)}</span>`;
         }
     }
@@ -175,17 +306,6 @@ export class MovementSystem {
                 if (hasIt && gt.tier >= best.tier) best = gt;
             }
         });
-
-        if (toolType === 'axe' && (player.equipment.includes('lumber_axe') || (player.inventory['lumber_axe'] || 0) > 0)) {
-            if (best.tier < 2) best = { tier: 2, speedBonus: 0.15, doubleDropChance: 0.25, name: '伐木鋼斧' };
-        }
-        if (toolType === 'pickaxe') {
-            if (player.equipment.includes('iron_pickaxe') || (player.inventory['iron_pickaxe'] || 0) > 0) {
-                if (best.tier < 3) best = { tier: 3, speedBonus: 0.2, doubleDropChance: 0.15, name: '精鐵十字鎬' };
-            } else if (player.equipment.includes('stone_pickaxe') || (player.inventory['stone_pickaxe'] || 0) > 0) {
-                if (best.tier < 2) best = { tier: 2, speedBonus: 0.05, doubleDropChance: 0.05, name: '石製十字鎬' };
-            }
-        }
         return best;
     }
 
@@ -200,7 +320,7 @@ export class MovementSystem {
         return yields[0];
     }
 
-  // 🌟 請替換 src/systems/MovementSystem.js 內的 executeNodeGathering 與 handleMove 方法：
+    // 維持原版一按即採集的爽快設定
     executeNodeGathering(nodeConfig, row, col, originalTileId) {
         const { player, currentMap } = this.gameState;
         const bestTool = this.getBestPlayerTool(player, nodeConfig.requiredToolType);
@@ -246,90 +366,8 @@ export class MovementSystem {
         this.updateContextActionUI();
     }
 
-    handleMove(dir) {
-        // 🌟 關鍵修復 1：若戰鬥升級對話框 (#pixel-dialog-layer) 仍開著，按方向鍵時自動幫玩家關閉對話框並繼續移動！
-        const dialogLayer = document.getElementById('pixel-dialog-layer');
-        if (dialogLayer && dialogLayer.style.display === 'flex') {
-            dialogLayer.style.display = 'none';
-        }
-
-        // 🌟 關鍵修復 2：若戰鬥視窗與選單視窗都已關閉，不論 currentState 為何都自動強制恢復為 EXPLORATION！
-        const uiLayer = document.getElementById('ui-layer');
-        const combatLayer = document.getElementById('combat-layer');
-        const merchLayer = document.getElementById('merchant-layer');
-        const fishLayer = document.getElementById('fishing-layer');
-
-        const isOverlayOpen =
-            (uiLayer && uiLayer.style.display === 'flex') ||
-            (combatLayer && combatLayer.style.display === 'block') ||
-            (merchLayer && merchLayer.style.display === 'flex') ||
-            (fishLayer && fishLayer.style.display === 'flex');
-
-        if (!isOverlayOpen && this.gameState.currentState !== 'TITLE_SCREEN' && this.gameState.currentState !== 'ENDING_SCREEN') {
-            this.gameState.currentState = 'EXPLORATION';
-            this.uiManager && (this.uiManager.isOpen = false);
-        }
-
-        if (this.gameState.currentState !== 'EXPLORATION') return;
-        
-        const { player, currentMap } = this.gameState;
-        let targetCol = player.col; let targetRow = player.row;
-        player.direction = dir;
-
-        if (dir === 'up') targetRow -= 1; else if (dir === 'down') targetRow += 1;
-        else if (dir === 'left') targetCol -= 1; else if (dir === 'right') targetCol += 1;
-
-        if (targetCol >= 0 && targetCol < currentMap.cols && targetRow >= 0 && targetRow < currentMap.rows) {
-            const targetTile = currentMap.tiles[targetRow][targetCol];
-            
-            if (targetTile === 45) {
-                if (!player.equipment.includes('grappling_hook')) {
-                    eventBus.emit('SHOW_TOAST', '前方是無底深淵，需裝備【精鋼飛索抓鉤】才能跨越！');
-                    eventBus.emit('PLAY_SOUND', 'bump');
-                    this.updateContextActionUI();
-                    return;
-                }
-            }
-
-            const walkableTiles = [0, 2, 7, 11, 12, 13, 14, 15, 18, 20, 30, 31, 32, 33, 34, 40, 42, 45];
-
-            if (walkableTiles.includes(targetTile)) {
-                player.col = targetCol; player.row = targetRow;
-                player.isSailing = (targetTile === 7);
-                this.updateContextActionUI();
-                eventBus.emit('SAVE_GAME');
-
-                if ([2, 11, 30, 31, 32, 33, 34].includes(targetTile)) {
-                    const mapId = currentMap.id;
-                    if (mapId === 'safe_camp') eventBus.emit('CHANGE_MAP', 'starter_island_from_camp');
-                    else if (targetTile === 11) eventBus.emit('CHANGE_MAP', 'campMap');
-                    else if (mapId === 'starter_island') eventBus.emit('CHANGE_MAP', 'level2Map');
-                    else if (mapId === 'desert_ruins') { if (targetTile === 30) eventBus.emit('CHANGE_MAP', 'poisonMap'); else eventBus.emit('CHANGE_MAP', 'starter_island'); }
-                    else if (mapId === 'poison_swamp') { if (targetTile === 31) eventBus.emit('CHANGE_MAP', 'iceMap'); else eventBus.emit('CHANGE_MAP', 'level2Map_from_poison'); }
-                    else if (mapId === 'ice_ruins') { if (targetTile === 32) eventBus.emit('CHANGE_MAP', 'deepSeaMap'); else eventBus.emit('CHANGE_MAP', 'poisonMap_from_ice'); }
-                    else if (mapId === 'deep_sea') { if (targetTile === 33) eventBus.emit('CHANGE_MAP', 'clockworkMap'); else eventBus.emit('CHANGE_MAP', 'ice_ruins_from_sea'); }
-                    else if (mapId === 'clockwork') { if (targetTile === 34) eventBus.emit('CHANGE_MAP', 'floatingMap'); else eventBus.emit('CHANGE_MAP', 'deep_sea_from_clock'); }
-                    else if (mapId === 'floating') { if (targetTile === 2) eventBus.emit('CHANGE_MAP', 'bossMap'); else eventBus.emit('CHANGE_MAP', 'clockwork_from_float'); }
-                    else if (mapId === 'boss_arena') { eventBus.emit('CHANGE_MAP', 'floating_from_boss'); }
-                    return; 
-                }
-
-                // 合理化野外遇敵率 (6% 遇怪，不會行兩步就被打斷)
-                if (currentMap.id !== 'safe_camp' && targetTile !== 7) {
-                    const rand = Math.random();
-                    if (rand < 0.015) eventBus.emit('GOBLIN_ENCOUNTER');
-                    else if (rand < 0.065) eventBus.emit('ENCOUNTER_ENEMY', 'random_monster');
-                }
-            } else {
-                this.updateContextActionUI();
-                eventBus.emit('PLAY_SOUND', 'bump');
-            }
-        }
-    }
-
     bindKeys() {
         window.addEventListener('keydown', (e) => {
-            // 若焦點在文字輸入框內，不攔截按鍵
             if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
 
             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
@@ -381,6 +419,88 @@ export class MovementSystem {
         if (selectedItemLabel) selectedItemLabel.innerHTML = `${itemData.name} (${count})`;
     }
 
+    handleMove(dir) {
+        const dialogLayer = document.getElementById('pixel-dialog-layer');
+        if (dialogLayer && dialogLayer.style.display === 'flex') {
+            dialogLayer.style.display = 'none';
+        }
+
+        const uiLayer = document.getElementById('ui-layer');
+        const combatLayer = document.getElementById('combat-layer');
+        const merchLayer = document.getElementById('merchant-layer');
+        const fishLayer = document.getElementById('fishing-layer');
+
+        const isOverlayOpen =
+            (uiLayer && uiLayer.style.display === 'flex') ||
+            (combatLayer && combatLayer.style.display === 'block') ||
+            (merchLayer && merchLayer.style.display === 'flex') ||
+            (fishLayer && fishLayer.style.display === 'flex');
+
+        if (!isOverlayOpen && this.gameState.currentState !== 'TITLE_SCREEN' && this.gameState.currentState !== 'ENDING_SCREEN') {
+            this.gameState.currentState = 'EXPLORATION';
+            if (this.uiManager) this.uiManager.isOpen = false;
+        }
+
+        if (this.gameState.currentState !== 'EXPLORATION') return;
+        
+        const { player, currentMap } = this.gameState;
+        let targetCol = player.col;
+        let targetRow = player.row;
+        player.direction = dir;
+
+        if (dir === 'up') targetRow -= 1;
+        else if (dir === 'down') targetRow += 1;
+        else if (dir === 'left') targetCol -= 1;
+        else if (dir === 'right') targetCol += 1;
+
+        if (targetCol >= 0 && targetCol < currentMap.cols && targetRow >= 0 && targetRow < currentMap.rows) {
+            const targetTile = currentMap.tiles[targetRow][targetCol];
+            
+            if (targetTile === 45) {
+                if (!player.equipment.includes('grappling_hook')) {
+                    eventBus.emit('SHOW_TOAST', '前方是無底深淵，需裝備【精鋼飛索抓鉤】才能跨越！');
+                    eventBus.emit('PLAY_SOUND', 'bump');
+                    this.updateContextActionUI();
+                    return;
+                }
+            }
+
+            const walkableTiles = [0, 2, 7, 11, 12, 13, 14, 15, 18, 20, 30, 31, 32, 33, 34, 40, 42, 45];
+
+            if (walkableTiles.includes(targetTile)) {
+                player.col = targetCol;
+                player.row = targetRow;
+                player.isSailing = (targetTile === 7);
+                this.updateContextActionUI();
+                eventBus.emit('SAVE_GAME');
+
+                if ([2, 11, 30, 31, 32, 33, 34].includes(targetTile)) {
+                    const mapId = currentMap.id;
+                    if (mapId === 'safe_camp') eventBus.emit('CHANGE_MAP', 'starter_island_from_camp');
+                    else if (targetTile === 11) eventBus.emit('CHANGE_MAP', 'campMap');
+                    else if (mapId === 'starter_island') eventBus.emit('CHANGE_MAP', 'level2Map');
+                    else if (mapId === 'desert_ruins') { if (targetTile === 30) eventBus.emit('CHANGE_MAP', 'poisonMap'); else eventBus.emit('CHANGE_MAP', 'starter_island'); }
+                    else if (mapId === 'poison_swamp') { if (targetTile === 31) eventBus.emit('CHANGE_MAP', 'iceMap'); else eventBus.emit('CHANGE_MAP', 'level2Map_from_poison'); }
+                    else if (mapId === 'ice_ruins') { if (targetTile === 32) eventBus.emit('CHANGE_MAP', 'deepSeaMap'); else eventBus.emit('CHANGE_MAP', 'poisonMap_from_ice'); }
+                    else if (mapId === 'deep_sea') { if (targetTile === 33) eventBus.emit('CHANGE_MAP', 'clockworkMap'); else eventBus.emit('CHANGE_MAP', 'ice_ruins_from_sea'); }
+                    else if (mapId === 'clockwork') { if (targetTile === 34) eventBus.emit('CHANGE_MAP', 'floatingMap'); else eventBus.emit('CHANGE_MAP', 'deep_sea_from_clock'); }
+                    else if (mapId === 'floating') { if (targetTile === 2) eventBus.emit('CHANGE_MAP', 'bossMap'); else eventBus.emit('CHANGE_MAP', 'clockwork_from_float'); }
+                    else if (mapId === 'boss_arena') { eventBus.emit('CHANGE_MAP', 'floating_from_boss'); }
+                    return; 
+                }
+
+                if (currentMap.id !== 'safe_camp' && targetTile !== 7) {
+                    const rand = Math.random();
+                    if (rand < 0.015) eventBus.emit('GOBLIN_ENCOUNTER');
+                    else if (rand < 0.065) eventBus.emit('ENCOUNTER_ENEMY', 'random_monster');
+                }
+            } else {
+                this.updateContextActionUI();
+                eventBus.emit('PLAY_SOUND', 'bump');
+            }
+        }
+    }
+
     interact() {
         const uiLayer = document.getElementById('ui-layer');
         if (this.gameState.currentState === 'UI_MENU' && (!uiLayer || uiLayer.style.display === 'none')) {
@@ -391,9 +511,12 @@ export class MovementSystem {
         const { player, currentMap } = this.gameState;
         const mapTier = currentMap.tier || 1;
 
-        let targetCol = player.col; let targetRow = player.row;
-        if (player.direction === 'up') targetRow -= 1; else if (player.direction === 'down') targetRow += 1;
-        else if (player.direction === 'left') targetCol -= 1; else if (player.direction === 'right') targetCol += 1;
+        let targetCol = player.col;
+        let targetRow = player.row;
+        if (player.direction === 'up') targetRow -= 1;
+        else if (player.direction === 'down') targetRow += 1;
+        else if (player.direction === 'left') targetCol -= 1;
+        else if (player.direction === 'right') targetCol += 1;
 
         if (targetCol >= 0 && targetCol < currentMap.cols && targetRow >= 0 && targetRow < currentMap.rows) {
             const targetTile = currentMap.tiles[targetRow][targetCol];
@@ -404,16 +527,20 @@ export class MovementSystem {
                 
                 if (targetTile === 0) {
                     if ((player.inventory[selectedKey] || 0) > 0) {
-                        player.removeItem(selectedKey, 1); currentMap.tiles[targetRow][targetCol] = tileToPlace;
+                        player.removeItem(selectedKey, 1);
+                        currentMap.tiles[targetRow][targetCol] = tileToPlace;
                         eventBus.emit('PLAY_SOUND', 'collect');
                         eventBus.emit('SPAWN_PARTICLES', { col: targetCol, row: targetRow, color: '#e88b25' });
-                        this.updateBuildUI(); eventBus.emit('HUD_UPDATE');
+                        this.updateBuildUI();
+                        eventBus.emit('HUD_UPDATE');
                     } else { eventBus.emit('SHOW_TOAST', '建造材料不足！'); }
                 } else if (Object.values(this.buildTileIds).includes(targetTile)) {
                     const itemToGive = Object.keys(this.buildTileIds).find(k => this.buildTileIds[k] === targetTile);
-                    player.addItem(itemToGive, 1); currentMap.tiles[targetRow][targetCol] = 0;
+                    player.addItem(itemToGive, 1);
+                    currentMap.tiles[targetRow][targetCol] = 0;
                     eventBus.emit('PLAY_SOUND', 'collect');
-                    this.updateBuildUI(); eventBus.emit('HUD_UPDATE');
+                    this.updateBuildUI();
+                    eventBus.emit('HUD_UPDATE');
                 } else { eventBus.emit('SHOW_TOAST', '此位置無法建造或拆除！'); }
                 return;
             }
