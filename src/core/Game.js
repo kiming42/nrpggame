@@ -232,11 +232,48 @@ export class Game {
         });
         
         eventBus.on('OPEN_MERCHANT', () => this.openMerchantLayer());
+// 🌟 請替換 src/core/Game.js 內的 START_FISHING 與 CATCH_FISH_NOW 監聽器：
+        eventBus.on('CATCH_FISH_NOW', () => {
+            if (this.gameState.currentState === 'FISHING') this.catchFish();
+        });
+
         eventBus.on('START_FISHING', () => {
             this.gameState.currentState = 'FISHING';
             this.fishingJustStarted = true;
+            setTimeout(() => { this.fishingJustStarted = false; }, 180);
+
             const el = document.getElementById('fishing-layer');
-            if (el) el.style.display = 'flex';
+            if (el) {
+                el.style.display = 'flex';
+                // 自動在垂釣視窗內注入手機專用「🎣 立即拉竿！」綠色大按鈕，並支援直接點擊視窗停針！
+                if (!document.getElementById('btn-mobile-pull-rod')) {
+                    const cancelBtn = document.getElementById('btn-cancel-fishing');
+                    if (cancelBtn && cancelBtn.parentElement) {
+                        const pullBtn = document.createElement('button');
+                        pullBtn.id = 'btn-mobile-pull-rod';
+                        pullBtn.className = 'px-btn success';
+                        pullBtn.style.cssText = 'width:100%; padding:14px; font-size:18px; font-weight:900; margin-bottom:10px; background:#16a34a; color:#fff; border:3px solid #052e16; border-radius:6px; cursor:pointer; box-shadow:0 4px 0 #052e16;';
+                        pullBtn.innerText = '🎣 立即拉竿！(點擊此處停針)';
+                        const pullHandler = (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            this.catchFish();
+                        };
+                        pullBtn.addEventListener('touchstart', pullHandler, { passive: false });
+                        pullBtn.addEventListener('mousedown', pullHandler);
+                        cancelBtn.parentElement.insertBefore(pullBtn, cancelBtn);
+                    }
+
+                    // 點擊垂釣彈窗背景任何位置（除「收竿離開」外）也能直接停針！
+                    el.addEventListener('touchstart', (e) => {
+                        if (e.target.id === 'btn-cancel-fishing') return;
+                        if (this.gameState.currentState === 'FISHING' && !this.fishingJustStarted) {
+                            e.preventDefault();
+                            this.catchFish();
+                        }
+                    }, { passive: false });
+                }
+            }
             this.fishingCursor = 0;
             this.fishingDirection = 1;
             this.fishingLoop();
@@ -1437,6 +1474,7 @@ export class Game {
         }
     }
 
+// 🌟 請替換 src/core/Game.js 內的 updateHUD() 方法 (直接刪除紅心列，確保頂部右邊全螢幕鍵完整顯示)：
     updateHUD() {
         const player = this.gameState.player;
         if (!this.gameState.encyclopedia) this.gameState.encyclopedia = [];
@@ -1463,6 +1501,25 @@ export class Game {
             });
         }
 
+        // 🌟 關鍵修復：強制改造頂部 #hud 為極簡單行排版，徹底刪掉佔位置的 14 顆紅心與重複假數值欄！
+        const hudEl = document.getElementById('hud');
+        if (hudEl) {
+            hudEl.style.cssText = 'display:flex; align-items:center; justify-content:space-between; width:100%; max-width:100vw; box-sizing:border-box; padding:3px 8px; overflow:hidden; gap:4px;';
+            // 自動隱藏 HTML 中多餘的假裝飾欄 (例如重複的 0 / 500 區塊)
+            Array.from(hudEl.children).forEach(child => {
+                if (child.innerText && child.innerText.includes('0') && child.innerText.includes('500') && !child.querySelector('#hud-val-gold')) {
+                    child.style.display = 'none';
+                }
+            });
+        }
+
+        // 將原本長長的紅心列改為簡潔的「❤️ HP」數字徽章 (或直接隱藏紅心)
+        const heartsRow = document.getElementById('hud-hearts-row');
+        if (heartsRow) {
+            heartsRow.style.cssText = 'display:inline-flex; align-items:center; background:#3b2614; color:#fde047; padding:1px 6px; border-radius:4px; font-size:11px; font-weight:900; white-space:nowrap;';
+            heartsRow.innerHTML = `❤️ ${player.hp}/${player.maxHp}`;
+        }
+
         const hudName = document.getElementById('hud-player-name');
         const hudLvl = document.getElementById('hud-lvl-badge');
         const arenaName = document.getElementById('arena-player-name');
@@ -1473,19 +1530,6 @@ export class Game {
         if (hudLvl) hudLvl.innerText = `Lv.${player.level || 1}`;
         if (arenaName) arenaName.innerText = pName;
         if (heroUnitName) heroUnitName.innerText = pName;
-
-        const heartsRow = document.getElementById('hud-hearts-row');
-        if (heartsRow) {
-            const totalHearts = 14;
-            const hpRatio = Math.max(0, Math.min(1, player.hp / (player.maxHp || 160)));
-            const activeHearts = Math.ceil(hpRatio * totalHearts);
-            let heartsHtml = '';
-            for (let i = 0; i < totalHearts; i++) {
-                heartsHtml += `<span class="srpg-heart ${i < activeHearts ? '' : 'empty'}">❤️</span>`;
-            }
-            heartsRow.innerHTML = heartsHtml;
-            heartsRow.title = `${pName} Lv.${player.level || 1} ｜ HP: ${player.hp}/${player.maxHp} ｜ MP: ${player.mp || 60}/${player.maxMp || 60}`;
-        }
 
         const goldVal = document.getElementById('hud-val-gold');
         if (goldVal) goldVal.innerText = player.gold || 0;
