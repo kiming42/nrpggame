@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>知識荒島 - Survival RPG 羊皮紙典藏版 Ver 7.0</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="portrait-warning">[ ! ] 請將手機打橫，並點擊「全螢幕」以獲得最佳體驗</div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="960" height="540"></canvas>
+        
+        <!-- 🌟 1. 仿照附圖頂部：淺褐木紋狀態列 + 一排像素紅心 HP + 商店與時間 -->
+        <div id="hud" class="srpg-top-bar">
+           <div class="srpg-top-left">
+                <button id="btn-top-settings" class="srpg-icon-only" title="系統與題庫設定">⚙️</button>
+                <div class="srpg-gem-badge" title="角色名稱與等級" style="background:#3b2614; color:#fde047;">
+                    <span id="hud-player-name">Justin</span>
+                    <b id="hud-lvl-badge" style="margin-left:4px; color:#fff;">Lv.1</b>
+                </div>
+                <div class="srpg-gem-badge" title="真理碎片與金幣">
+                    <span id="hud-icon-frag">💎</span>
+                    <b id="hud-val-frag">0</b>
+                    <span style="margin-left:6px;">💰</span>
+                    <b id="hud-val-gold">500</b>
+                </div>
+                <!-- 一排像素愛心血條 -->
+                <div id="hud-hearts-row" class="srpg-hearts-row"></div>
+            </div>
+
+            <div class="srpg-top-right">
+                <button id="btn-top-settings" class="srpg-icon-only" title="系統與題庫設定">⚙️</button>
+                <div class="srpg-gem-badge" title="真理碎片與金幣">
+                    <span id="hud-icon-frag">💎</span>
+                    <b id="hud-val-frag">0</b>
+                    <span style="margin-left:6px;">💰</span>
+                    <b id="hud-val-gold">500</b>
+                </div>
+                <!-- 一排像素愛心血條 -->
+                <div id="hud-hearts-row" class="srpg-hearts-row"></div>
+            </div>
+
+            <div class="srpg-top-right">
+                <div id="combo-bar" class="srpg-combo-tag" style="display: none;">🔥x2</div>
+                <button id="btn-hud-shop" class="srpg-cart-btn" title="大陸商會與古幣兌換">🛒</button>
+                <div class="srpg-clock-box">
+                    <span id="hud-weather-ico">☀️</span>
+                    <b id="hud-clock-text">18:50</b>
+                </div>
+                <button id="btn-hud-fullscreen" class="srpg-icon-only" title="全螢幕" style="font-size:15px;">⛶</button>
+            </div>
+        </div>
+
+        <!-- 🌟 2. 仿照附圖左上與右上：獨立正方形大圖示掣 (任務/地圖、背包、鐵砧製作、圓形羅盤) -->
+        <button id="btn-float-quest-map" class="srpg-float-btn left-top" title="任務與群島地圖">
+            <span class="chk-lines">☑ ☰</span>
+        </button>
+
+        <div class="srpg-float-right-group">
+            <button id="btn-float-bag" class="srpg-float-btn" title="背包與紙娃娃裝備 [I]">
+                <span id="float-ico-bag">🎒</span>
+            </button>
+            <button id="btn-float-craft" class="srpg-float-btn" title="製作與鍛造工坊">
+                <span id="float-ico-anvil">⚒️</span>
+            </button>
+            <!-- 右上角圓形 N/E/S/W 羅盤框 (由 CanvasRenderer 繪製迷你島嶼圖於內部) -->
+            <div class="srpg-compass-ring" id="btn-compass-map" title="點擊打開群島世界地圖">
+                <span class="comp-dir n">N</span>
+                <span class="comp-dir e">E</span>
+                <span class="comp-dir s">S</span>
+                <span class="comp-dir w">W</span>
+            </div>
+        </div>
+
+        <div id="toast-container"></div>
+
+        <!-- 營地建造面板 -->
+        <div id="build-mode-ui" class="px-window">
+            <div class="px-win-title">營地建造模式</div>
+            <div style="font-size: 12px; margin-bottom: 8px; color:#3e2723;">面向空地按 [A / 空白鍵] 放置或拆除</div>
+            <div style="display: flex; justify-content: center; align-items: center; gap:8px;">
+                <button id="btn-build-prev" class="px-btn">&lt; [Q]</button>
+                <div id="build-selected-item" style="font-size: 14px; min-width: 140px; font-weight: bold; color:#2b1d0e;">木板 (0)</div>
+                <button id="btn-build-next" class="px-btn">[E] &gt;</button>
+            </div>
+        </div>
+
+<!-- 🌟 100% 還原影片操控介面：左下圓盤搖桿 + 右下食物快捷方塊(含2x2彈出選單) + 情境動態圖示大圓鈕 -->
+        <div id="mobile-controls" style="display: flex;">
+            <div class="d-pad srpg-wheel-pad">
+                <button id="btn-up" class="btn-up">▲</button>
+                <button id="btn-left" class="btn-left">◀</button>
+                <div class="wheel-center-knob"></div>
+                <button id="btn-right" class="btn-right">▶</button>
+                <button id="btn-down" class="btn-down">▼</button>
+            </div>
+
+            <div class="action-pad" style="position:relative;">
+                <!-- 影片 00:44 處：點擊食物方塊彈出的 2x2 快捷食物選擇框 -->
+                <div id="quick-food-popup" style="display:none; position:absolute; bottom:140px; right:0; background:#f5dfb8; border:3px solid #3b2614; border-radius:6px; padding:6px; box-shadow:0 6px 16px rgba(0,0,0,0.7); z-index:25;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                        <span style="font-size:11px; font-weight:900; color:#3b2614;">選擇快捷食物</span>
+                        <button id="btn-close-food-popup" style="background:#f3dbb3; border:1.5px solid #3b2614; font-weight:900; font-size:11px; cursor:pointer; padding:0 4px;">X</button>
+                    </div>
+                    <div id="quick-food-grid" style="display:grid; grid-template-columns:repeat(2, 46px); gap:5px;"></div>
+                </div>
+
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <button id="btn-build-toggle" class="srpg-quick-slot" title="營地建造模式 [B]" style="width:42px; height:42px; font-size:14px;">
+                        🧱
+                    </button>
+                    <!-- 影片右下角上方：米白食物/藥水快捷方塊 (點擊直接進食回血，長按或點小箭頭切換食物) -->
+                    <button id="btn-quick-food" class="srpg-quick-slot" title="點擊食用回血 [F]｜再次點擊可切換食物" style="background:rgba(243, 219, 179, 0.9); position:relative;">
+                        <span id="quick-food-icon">🍖</span>
+                        <b id="quick-food-count" style="position:absolute; bottom:1px; right:3px; font-size:11px; color:#2b1d0e;">0</b>
+                    </button>
+                </div>
+
+                <!-- 影片右下角下方：情境動態行動大圓鈕 (面向樹變斧頭、面向水變釣竿、面向草變手掌) -->
+                <button id="btn-action" class="srpg-circle-act-btn" title="互動 / 採集 / 垂釣 [Space/A]">
+                    <span id="dynamic-action-icon">✋</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 戰鬥畫面 -->
+        <div id="combat-layer">
+            <div id="arena-board" class="arena-tiled-floor">
+                <div id="arena-scenery-layer" class="arena-scenery-layer"></div>
+
+                <div class="arena-top-left-badge px-window">
+                    <div class="player-badge-top">
+                        <span id="arena-player-name">Justin</span> 
+                        <span id="arena-player-lvl" style="color:#f7d51d; border:1px solid #f7d51d; padding:0 4px; font-size:11px;">Lv.1</span> 
+                        <span id="arena-player-shield" style="background:#1976a6; color:#fff; padding:0 4px; font-size:10px; display:none;">🛡️0</span>
+                        <span id="arena-truth-count" style="color:#ff5722;">🔥0</span>
+                    </div>
+                    <div class="player-badge-sub">
+                        <span id="arena-player-class" style="color:#f5e6c8;">大地劍聖</span> | 
+                        <span>⚔️<b id="arena-player-atk">50</b></span> 
+                        <span>🛡️<b id="arena-player-def">30</b></span>
+                        <button id="btn-quick-job" class="arena-mini-tag">轉職</button>
+                    </div>
+                </div>
+
+                <div class="arena-top-center-banner px-window">
+                    <span class="banner-arrow">◀</span>
+                    <span id="arena-chapter-title" style="color:#f5e6c8; margin:0 10px;">⏳ 第一章(T1)：翠綠新手荒島</span>
+                    <span class="banner-arrow">▶</span>
+                </div>
+
+                <div class="arena-top-right-bar">
+                    <div class="arena-turn-pill">🟢 我方回合 (第 <b id="combat-turn-num">1</b> 回合)</div>
+                    <div class="arena-top-buttons">
+                        <button class="arena-sys-btn" id="btn-arena-bag" title="背包庫存">🎒</button>
+                        <button class="arena-sys-btn" id="btn-arena-skill" title="職業技能研發">✨</button>
+                        <button class="arena-sys-btn" id="btn-arena-setting" title="系統設定">⚙️</button>
+                        <button class="arena-sys-btn" id="btn-arena-fs" title="全螢幕">⛶</button>
+                        <button class="arena-sys-btn" id="btn-arena-camp" title="返回營地">⛺</button>
+                    </div>
+                </div>
+
+                <div id="enemies-chessboard" class="chessboard-grid"></div>
+
+                <div class="arena-bottom-left-skills">
+                    <div class="skills-dock-row" id="combat-skills-bar">
+                        <button class="arena-skill-card active" data-skill="slash">
+                            <div class="sk-cost">消耗 0</div>
+                            <div class="sk-box"><span id="sk-icon-slash"></span></div>
+                            <div class="sk-name">破甲劈</div>
+                        </button>
+                        <button class="arena-skill-card" data-skill="thunder">
+                            <div class="sk-cost">🔒未研發</div>
+                            <div class="sk-box"><span id="sk-icon-thunder"></span></div>
+                            <div class="sk-name">旋風斬</div>
+                        </button>
+                        <button class="arena-skill-card" data-skill="firestorm">
+                            <div class="sk-cost">🔒未研發</div>
+                            <div class="sk-box"><span id="sk-icon-fire"></span></div>
+                            <div class="sk-name">範圍技</div>
+                        </button>
+                        <button class="arena-skill-card" data-skill="heal">
+                            <div class="sk-cost">🔒未研發</div>
+                            <div class="sk-box"><span id="sk-icon-heal"></span></div>
+                            <div class="sk-name">終極技</div>
+                        </button>
+                    </div>
+
+                    <div class="arena-potions-row">
+                        <button id="btn-item-heal" class="arena-potion-circle red-ring" title="治療藥水 / 九轉還魂丹">
+                            <span id="pot-icon-hp"></span><span id="count-item-heal" class="p-count">x0</span>
+                        </button>
+                        <button id="btn-item-1" class="arena-potion-circle blue-ring" title="真實放大鏡">
+                            <span id="pot-icon-mag"></span><span id="count-item-1" class="p-count">x0</span>
+                        </button>
+                        <button id="btn-item-3" class="arena-potion-circle orange-ring" title="爆裂火藥彈">
+                            <span id="pot-icon-bomb"></span><span id="count-item-3" class="p-count">x0</span>
+                        </button>
+                        <button id="btn-open-mistakes-combat" class="arena-potion-circle gold-ring" title="錯題懸賞錄">
+                            📜
+                        </button>
+                    </div>
+                </div>
+
+                <div class="arena-bottom-right-controls">
+                    <button id="btn-combat-escape" class="arena-tan-btn">🏃 撤退</button>
+                    <button id="btn-combat-speed" class="arena-tan-btn speed-btn">⏩ x1</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 答題畫面 -->
+        <div id="quiz-modal-layer" class="quiz-modal-overlay" style="display: none;">
+            <div class="quiz-parchment-window">
+                <div class="quiz-parchment-header">
+                    <div id="quiz-modal-title" class="quiz-header-title">
+                        ⚔️ 詠唱【破甲順劈】
+                    </div>
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <button id="btn-tts-read" class="quiz-read-btn" title="語音朗讀題目">🔊 朗讀題目</button>
+                        <button id="btn-quiz-close" class="quiz-close-btn">✖</button>
+                    </div>
+                </div>
+
+                <div class="quiz-parchment-body">
+                    <div class="quiz-prompt-box">
+                        <div id="q-svg-container" class="quiz-svg-holder" style="display: none;"></div>
+                        <div id="q-text" class="quiz-prompt-text">題目載入中...</div>
+                    </div>
+                    <div id="q-options" class="quiz-answer-options"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- NPC 商會與次元古幣秘寶兌換所視窗 (羊皮紙風格) -->
+        <div id="merchant-layer" class="overlay-layer">
+            <div class="srpg-scroll-window" style="max-width: 780px; width: 94%; height: 84vh;">
+                <button id="btn-close-merchant" class="srpg-close-x">X</button>
+                <div style="padding: 14px 20px; height: 100%; display: flex; flex-direction: column;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #5c3a21; padding-bottom:6px; margin-right:34px;">
+                        <span style="font-size:18px; font-weight:900; color:#3e2723;">🏛️ 商會與古幣兌換所</span>
+                        <span id="merchant-currencies-bar" style="font-size:13px; font-weight:900; color:#5c3a21;">💰 0 G</span>
+                    </div>
+                    <div id="merchant-npc-dialogue" style="background:#ebd5b3; border:2px solid #8c6239; padding:6px 10px; margin:8px 0; font-size:12px; color:#3e2723; font-weight:bold;"></div>
+                    <div id="merchant-shop-tabs" style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:8px;"></div>
+                    <div id="merchant-items-container" class="srpg-slot-grid" style="flex:1; overflow-y:auto; padding:6px;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 釣魚小遊戲視窗 -->
+        <div id="fishing-layer" class="overlay-layer">
+            <div class="srpg-scroll-window" style="max-width: 440px; padding: 20px; text-align: center;">
+                <div style="font-size:18px; font-weight:900; color:#3e2723;">🎣 深水垂釣挑戰</div>
+                <div style="font-size:13px; color:#5c3a21; margin-top:6px;">當指標進入綠色區域時按下 [A / 空白鍵]</div>
+                <div style="width: 100%; height: 24px; background: #3e2723; position: relative; border: 3px solid #5c3a21; margin: 15px 0;">
+                    <div style="position: absolute; width: 22%; height: 100%; background: #71aa34; left: 39%;"></div>
+                    <div id="fishing-cursor" style="position: absolute; width: 6px; height: 100%; background: #f7d51d; left: 0;"></div>
+                </div>
+                <button id="btn-cancel-fishing" class="srpg-brown-pill-btn">收竿離開</button>
+            </div>
+        </div>
+
+        <!-- 🌟 3. 全新羊皮紙古卷主視窗 (完美還原圖 1 製作、圖 2 任務、圖 3 群島地圖、圖 4 背包紙娃娃) -->
+        <div id="ui-layer">
+            <div class="srpg-scroll-window">
+                <button id="btn-close-ui" class="srpg-close-x" title="關閉 [I]">X</button>
+
+                <!-- 頂部書籤切換列 -->
+                <div class="srpg-top-tabs">
+                    <button class="tab-btn active" data-tab="tab-inventory" title="背包與裝備">🎒 背包</button>
+                    <button class="tab-btn" data-tab="tab-crafting" title="製作工坊">⚒️ 製作</button>
+                    <button class="tab-btn" data-tab="tab-quests" title="任務與群島地圖">📜 任務/地圖</button>
+                    <button class="tab-btn" data-tab="tab-skills" title="技能研發">🔬 技能</button>
+                    <button class="tab-btn" data-tab="tab-encyclopedia" title="博物圖鑑">📖 圖鑑</button>
+                    <button class="tab-btn" data-tab="tab-mistakes" title="錯題懸賞">🎯 錯題</button>
+                    <button class="tab-btn" data-tab="tab-settings" title="知識羅盤題庫">🧭 題庫</button>
+                    <button class="tab-btn" data-tab="tab-sys-config" title="系統設定">⚙️ 設定</button>
+                </div>
+
+                <!-- 內容區 1：圖 4 風格「左右雙頁背包 + 角色紙娃娃剪影裝備欄」 -->
+                <div id="tab-inventory" class="tab-content active">
+                    <div class="srpg-book-spread">
+                        <!-- 左頁：4 個圖示分類 Tab + 6x5 緊湊無字物品格 -->
+                        <div class="srpg-left-page">
+                            <div id="inventory-subtabs" class="srpg-cat-tabs"></div>
+                            <div id="inventory-list" class="srpg-slot-grid"></div>
+                            <div id="inv-selected-label" class="srpg-bottom-item-name">點擊物品格查看或穿戴</div>
+                        </div>
+                        <!-- 右頁：角色像素剪影 + 7 大裝備格 + 底部攻防暴擊數值 -->
+                        <div class="srpg-right-page">
+                            <div id="player-paperdoll-box" class="srpg-paperdoll-wrap"></div>
+                            <div id="player-stats-summary" class="srpg-paperdoll-stats"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 內容區 2：圖 1 風格「左右雙頁製作工坊 (左分類圖示、右大圖示+5材料格+數量加減+製作大掣)」 -->
+                <div id="tab-crafting" class="tab-content">
+                    <div class="srpg-book-spread">
+                        <div class="srpg-left-page">
+                            <div class="srpg-page-header">
+                                <span id="craft-frag-badge">💎 0</span>
+                                <b>製作</b>
+                            </div>
+                            <div id="crafting-list" class="srpg-craft-cats-scroll"></div>
+                            <div id="craft-selected-name-left" class="srpg-bottom-item-name">選擇配方</div>
+                        </div>
+                        <div class="srpg-right-page" id="crafting-detail-pane"></div>
+                    </div>
+                </div>
+
+                <!-- 內容區 3：圖 2 & 圖 3 風格「任務 / 群島世界地圖」雙分頁切換 -->
+                <div id="tab-quests" class="tab-content">
+                    <div id="quests-list" style="height:100%; display:flex; flex-direction:column;"></div>
+                </div>
+
+                <!-- 內容區 4：技能研發 -->
+                <div id="tab-skills" class="tab-content">
+                    <div id="skills-list" style="display: flex; flex-direction: column; gap: 6px; height:100%; overflow-y:auto;"></div>
+                </div>
+
+                <!-- 內容區 5：錯題懸賞 -->
+                <div id="tab-mistakes" class="tab-content">
+                    <div id="mistakes-list" style="display: flex; flex-direction: column; gap: 6px; height:100%; overflow-y:auto;"></div>
+                </div>
+
+                <!-- 內容區 6：博物圖鑑 -->
+                <div id="tab-encyclopedia" class="tab-content">
+                    <div style="height:100%; display:flex; flex-direction:column;">
+                        <div id="encyclopedia-progress" style="font-size:12px; font-weight:bold; color:#5c3a21; margin-bottom:4px;"></div>
+                        <div id="encyclopedia-list" class="srpg-slot-grid" style="flex:1; overflow-y:auto;"></div>
+                        <div id="ency-inspector-bar" class="srpg-bottom-item-name" style="margin-top:4px;">點擊圖鑑圖示查看說明</div>
+                    </div>
+                </div>
+
+                <!-- 內容區 7：知識羅盤題庫 -->
+                <div id="tab-settings" class="tab-content"><div id="subject-list" style="height:100%; overflow-y:auto;"></div></div>
+
+                <!-- 內容區 8：系統設定 -->
+                <div id="tab-sys-config" class="tab-content"><div id="sys-config-list" style="height:100%; overflow-y:auto;"></div></div>
+            </div>
+        </div>
+
+        <!-- 內置 RPG 像素對話框 -->
+        <div id="pixel-dialog-layer" class="dialog-overlay" style="display: none;">
+            <div class="srpg-scroll-window" style="max-width:480px; padding:18px;">
+                <div id="pixel-dialog-title" style="font-size:17px; font-weight:900; color:#3e2723; border-bottom:2px solid #5c3a21; padding-bottom:6px;">系統訊息</div>
+                <div id="pixel-dialog-text" class="pixel-dialog-content" style="color:#2b1d0e; font-weight:bold;"></div>
+                <div style="text-align: right; margin-top: 12px;">
+                    <button id="btn-dialog-ok" class="srpg-brown-pill-btn">確認 [Space/A]</button>
+                </div>
+            </div>
+        </div>
+
+<!-- 標題畫面 (含新遊戲角色名字設定) -->
+        <div id="title-screen" class="story-overlay">
+            <div class="title-logo-box px-window">
+                <div class="title-sub">16-BIT SURVIVAL &amp; KNOWLEDGE RPG</div>
+                <h1 class="title-main">知 識 荒 島</h1>
+                <div class="title-version">VER 7.2 CUSTOM HERO EDITION</div>
+            </div>
+
+            <div style="background:#f5dfb8; border:3px solid #3b2614; padding:8px 16px; border-radius:6px; margin-bottom:10px; display:flex; align-items:center; gap:8px; color:#2b1d0e; font-weight:900;">
+                <span>👤 冒險者名字：</span>
+                <input id="input-hero-name" type="text" maxlength="12" value="Justin" placeholder="輸入你的名字" style="background:#fff; border:2px solid #5c3a21; padding:4px 8px; font-size:15px; font-weight:900; color:#2b1d0e; width:140px; text-align:center; border-radius:4px;" />
+            </div>
+
+            <div class="mobile-hint-banner">* 手機橫向，全螢幕 *</div>
+            <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 14px;">
+                <button id="btn-title-fullscreen" class="px-btn teal" style="font-size: 15px; padding: 10px 16px;">[ 全螢幕 ]</button>
+                <button id="btn-start-game" class="px-btn success blink-text" style="font-size: 15px; padding: 10px 20px;">繼續冒險</button>
+                <button id="btn-new-game" class="px-btn danger" style="font-size: 15px; padding: 10px 16px;">全新遊戲</button>
+            </div>
+        </div>
+
+        <div id="ending-screen" class="story-overlay" style="display: none;">
+            <div class="px-window" style="padding:30px;">
+                <h1 style="color: #f7d51d; font-size: 34px; margin:0 0 15px 0;">VICTORY!</h1>
+                <p style="margin-bottom:20px; color:#ccc; line-height:1.6;">你已率領知識之力擊潰暗黑魔物軍團，成功奪得賢者王冠！</p>
+                <div style="display:flex; gap:10px; justify-content:center;">
+                    <button id="btn-continue-postgame" class="px-btn success" style="font-size: 16px;">繼續自由探索</button>
+                    <button id="btn-restart-game" class="px-btn danger" style="font-size: 16px;">重置新周目</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>
