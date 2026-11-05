@@ -1,5 +1,8 @@
 // src/systems/MovementSystem.js
-// 🌟 手機觸控完美修復版 (維持原版輕鬆採集設定，支援虛擬方向鍵長按連走 + 直接點擊螢幕地圖移動與採集)
+// 🌟 第一步商業級改造 (基於最新穩定觸控版)：
+// 1. 保留 cloneNode + pointerdown + 100ms 防連跳鎖，確保手機輕按 1 下精準只行 1 格
+// 2. 保留 TILE_SIZE = 48 與 cameraX/Y 點擊座標換算
+// 3. 實裝「多段敲擊耐久度」、「體力消耗」、「背包負重上限 (120/250)」與「稀有礦脈守衛伏擊」
 
 import { eventBus } from '../core/EventBus.js';
 import { Items } from '../data/items.js';
@@ -12,7 +15,15 @@ export class MovementSystem {
         this.buildItems = ['wood_plank', 'stone_wall', 'farm_plot', 'recycler', 'fossil_rex', 'golden_compass'];
         this.buildTileIds = { 'wood_plank': 20, 'stone_wall': 21, 'farm_plot': 12, 'recycler': 24, 'fossil_rex': 22, 'golden_compass': 23 };
         this.selectedQuickFoodId = 'cooked_fish';
+
+        this.holdStartTimeout = null;
         this.holdMoveInterval = null;
+        this._lastMoveTime = 0;
+
+        // 記錄地圖上每個資源點的當前剩餘耐久度 key: `${mapId}_${row}_${col}`
+        this.nodeHealthMap = {};
+        // 野外步行飢餓計步器
+        this.stepHungerCounter = 0;
 
         this.bindKeys();
         this.bindMobileTouchAndCanvasTap();
@@ -20,7 +31,19 @@ export class MovementSystem {
         setTimeout(() => this.updateContextActionUI(), 200);
     }
 
-// 🌟 請替換 src/systems/MovementSystem.js 內的 bindMobileTouchAndCanvasTap()：
+    // 計算背包當前總物品數與負重上限
+    getInventoryLoadInfo() {
+        const p = this.gameState.player;
+        let totalCount = 0;
+        for (const [k, cnt] of Object.entries(p.inventory || {})) {
+            if (cnt > 0 && k !== 'truth_fragment') totalCount += cnt;
+        }
+        const hasBigBag = p.equipment.includes('ACC_BAG_T1') || p.equipment.includes('ACC_BAG_T3') || (p.inventory['ACC_BAG_T1'] || 0) > 0;
+        const maxCap = hasBigBag ? 250 : 120;
+        return { totalCount, maxCap, isFull: totalCount >= maxCap };
+    }
+
+    // 手機方向鍵與畫面點擊移動 (已徹底解決按 1 下跳 3 格問題)
     bindMobileTouchAndCanvasTap() {
         const stopHoldMove = () => {
             if (this.holdStartTimeout) {
@@ -37,7 +60,6 @@ export class MovementSystem {
             const oldBtn = document.getElementById(`btn-${dir}`);
             if (!oldBtn) return;
 
-            // 🌟 關鍵修復：用 cloneNode 徹底移除 Game.js 原本重複綁定的 click/touchstart 監聽器，杜絕「按一下行 3 格」！
             const btn = oldBtn.cloneNode(true);
             oldBtn.parentNode.replaceChild(btn, oldBtn);
 
@@ -46,7 +68,6 @@ export class MovementSystem {
                 e.stopPropagation();
                 stopHoldMove();
                 this.handleMove(dir);
-                // 必須按住超過 320ms 才開始連續移動，輕點一下保證只走 1 格！
                 this.holdStartTimeout = setTimeout(() => {
                     this.holdMoveInterval = setInterval(() => {
                         this.handleMove(dir);
@@ -96,15 +117,13 @@ export class MovementSystem {
                 const { player, currentMap } = this.gameState;
                 if (!player || !currentMap) return;
 
-                const cols = currentMap.cols || 15;
-                const rows = currentMap.rows || 15;
-// 🌟 請將 src/systems/MovementSystem.js 內 handleCanvasTap 的 tapCol / tapRow 計算改為以下 6 行：
-                const viewW = this.gameState.viewWidth || 480;
-                const viewH = this.gameState.viewHeight || 320;
+                const tileSize = this.gameState.tileSize || 48;
+                const viewW = this.gameState.viewWidth || 960;
+                const viewH = this.gameState.viewHeight || 540;
                 const camX = this.gameState.cameraX || 0;
                 const camY = this.gameState.cameraY || 0;
-                const tapCol = Math.floor((((clientX - rect.left) / rect.width) * viewW + camX) / 32);
-                const tapRow = Math.floor((((clientY - rect.top) / rect.height) * viewH + camY) / 32);
+                const tapCol = Math.floor((((e.clientX - rect.left) / rect.width) * viewW + camX) / tileSize);
+                const tapRow = Math.floor((((e.clientY - rect.top) / rect.height) * viewH + camY) / tileSize);
 
                 const dCol = tapCol - player.col;
                 const dRow = tapRow - player.row;
@@ -176,7 +195,7 @@ export class MovementSystem {
         const p = this.gameState.player;
         const avail = this.getAvailableFoods();
         if (avail.length === 0) {
-            eventBus.emit('SHOW_TOAST', '背包內目前沒有食物或藥水！可於【⚒️ 製作】烘烤鮮魚或麵包。');
+            eventBus.emit('SHOW_TOAST', '⚠️ 背包內沒有食物或藥水！請釣魚或於【⚒️ 製作】烹飪補給品。');
             return;
         }
 
@@ -224,7 +243,7 @@ export class MovementSystem {
 
         eventBus.emit('PLAY_SOUND', 'collect');
         eventBus.emit('SPAWN_PARTICLES', { col: p.col, row: p.row, color: '#69f0ae', count: 14 });
-        eventBus.emit('SHOW_TOAST', `食用【${it?.name || '食物'}】：+${healHp} HP, +${healMp} MP！`);
+        eventBus.emit('SHOW_TOAST', `🍖 食用【${it?.name || '食物'}】：體力恢復 +${healHp} HP, +${healMp} MP！`);
         eventBus.emit('HUD_UPDATE');
         this.updateContextActionUI();
     }
@@ -275,15 +294,28 @@ export class MovementSystem {
     }
 
     getBestPlayerTool(player, toolType) {
-        if (toolType === 'none') return { tier: 5, speedBonus: 0, doubleDropChance: 0, name: '徒手探索' };
-        let best = { tier: 1, speedBonus: 0, doubleDropChance: 0, name: '基礎工具' };
+        if (toolType === 'none') return { tier: 5, speedBonus: 0, doubleDropChance: 0.05, power: 1, name: '徒手探索' };
+        let best = { tier: 0, speedBonus: 0, doubleDropChance: 0, power: 1, name: '徒手' };
 
         GatheringTools.forEach(gt => {
             if (gt.toolType === toolType) {
                 const hasIt = player.equipment.includes(gt.toolId) || (player.inventory[gt.toolId] || 0) > 0;
-                if (hasIt && gt.tier >= best.tier) best = gt;
+                if (hasIt && gt.tier >= best.tier) {
+                    best = { ...gt, power: Math.max(1, gt.tier) };
+                }
             }
         });
+
+        if (toolType === 'axe' && (player.equipment.includes('lumber_axe') || (player.inventory['lumber_axe'] || 0) > 0)) {
+            if (best.tier < 2) best = { tier: 2, speedBonus: 0.15, doubleDropChance: 0.15, power: 2, name: '伐木鋼斧' };
+        }
+        if (toolType === 'pickaxe') {
+            if (player.equipment.includes('iron_pickaxe') || (player.inventory['iron_pickaxe'] || 0) > 0) {
+                if (best.tier < 3) best = { tier: 3, speedBonus: 0.2, doubleDropChance: 0.15, power: 3, name: '精鐵十字鎬' };
+            } else if (player.equipment.includes('stone_pickaxe') || (player.inventory['stone_pickaxe'] || 0) > 0) {
+                if (best.tier < 2) best = { tier: 2, speedBonus: 0.05, doubleDropChance: 0.05, power: 2, name: '石製十字鎬' };
+            }
+        }
         return best;
     }
 
@@ -298,50 +330,113 @@ export class MovementSystem {
         return yields[0];
     }
 
-    // 維持原版一按即採集的爽快設定
+    // 🌟 第一步核心：多段敲擊採集 + 體力消耗 + 背包負重上限 + 守衛伏擊
     executeNodeGathering(nodeConfig, row, col, originalTileId) {
         const { player, currentMap } = this.gameState;
-        const bestTool = this.getBestPlayerTool(player, nodeConfig.requiredToolType);
+        const mapTier = currentMap.tier || 1;
 
-        if (nodeConfig.requiredToolType !== 'none' && bestTool.tier < nodeConfig.requiredToolTier - 1) {
-            const toolTypeName = nodeConfig.requiredToolType === 'axe' ? '伐木斧' : (nodeConfig.requiredToolType === 'pickaxe' ? '十字鎬' : '採藥鐮');
-            eventBus.emit('SHOW_TOAST', `⚠️ 需要更高階的${toolTypeName}才能採集【${nodeConfig.name}】！`);
+        // 1. 檢查背包負重上限
+        const loadInfo = this.getInventoryLoadInfo();
+        if (loadInfo.isFull) {
             eventBus.emit('PLAY_SOUND', 'bump');
+            eventBus.emit('SHOW_TOAST', `🎒 背包已滿載 (${loadInfo.totalCount}/${loadInfo.maxCap})！請先打開【⚒️ 製作】加工素材或前往商會出售。`);
             return;
         }
 
+        // 2. 檢查工具階級門檻
+        const bestTool = this.getBestPlayerTool(player, nodeConfig.requiredToolType);
+        const reqTier = nodeConfig.requiredToolTier || 1;
+        if (nodeConfig.requiredToolType !== 'none' && reqTier >= 2 && bestTool.tier < reqTier - 1) {
+            const toolTypeName = nodeConfig.requiredToolType === 'axe' ? '伐木斧' : (nodeConfig.requiredToolType === 'pickaxe' ? '十字鎬' : '採藥鐮');
+            eventBus.emit('PLAY_SOUND', 'bump');
+            eventBus.emit('SHOW_TOAST', `🔒 堅硬資源！需先於【⚒️ 製作】鍛造更高階的${toolTypeName}才能開採【${nodeConfig.name}】！`);
+            return;
+        }
+
+        // 3. 檢查體力 (HP) 是否足夠揮動工具
+        const staminaCost = nodeConfig.nodeType === 'harvesting' ? 1 : (1 + mapTier);
+        if (player.hp <= staminaCost + 5) {
+            eventBus.emit('PLAY_SOUND', 'bump');
+            eventBus.emit('SHOW_TOAST', `💦 體力過低 (${player.hp} HP) 無法進行重度採集！請點擊右下角食物進食或回營地休息。`);
+            return;
+        }
+
+        player.hp = Math.max(1, player.hp - staminaCost);
+
+        // 4. 計算資源點耐久度 (多段敲擊)
+        const nodeKey = `${currentMap.id}_${row}_${col}`;
+        const defaultMaxHits = {
+            logging: 3 + Math.floor(mapTier / 2),
+            mining: 4 + Math.floor(mapTier / 2),
+            crystal_vein: 5 + Math.floor(mapTier / 2),
+            harvesting: 2,
+            scavenging: 3
+        }[nodeConfig.nodeType] || 3;
+
+        if (this.nodeHealthMap[nodeKey] === undefined) {
+            this.nodeHealthMap[nodeKey] = defaultMaxHits;
+        }
+
+        const hitPower = Math.max(1, bestTool.power || 1);
+        this.nodeHealthMap[nodeKey] -= hitPower;
+
+        const colorMap = { logging: '#8d5524', mining: '#9badb7', crystal_vein: '#42c5f5', harvesting: '#71aa34', scavenging: '#f7d51d' };
+        const pColor = colorMap[nodeConfig.nodeType] || '#f7d51d';
+
+        if (this.nodeHealthMap[nodeKey] > 0) {
+            const leftHits = this.nodeHealthMap[nodeKey];
+            const actionVerb = nodeConfig.nodeType === 'logging' ? '🪓 砍伐中' : (nodeConfig.nodeType === 'harvesting' ? '🌿 採集中' : '⛏️ 挖掘中');
+            eventBus.emit('PLAY_SOUND', 'bump');
+            eventBus.emit('SPAWN_PARTICLES', { col, row, color: pColor, count: 8 });
+            eventBus.emit('SHOW_TOAST', `${actionVerb}【${nodeConfig.name}】... 還需敲擊 ${leftHits} 次 (-${staminaCost} 體力)`);
+            eventBus.emit('HUD_UPDATE');
+            return;
+        }
+
+        // 5. 耐久度歸零：獲得素材並進入長冷卻重生
+        delete this.nodeHealthMap[nodeKey];
         const emptyTile = currentMap.id === 'ice_ruins' ? 18 : (currentMap.id === 'deep_sea' ? 40 : (currentMap.id === 'clockwork' ? 42 : 0));
         currentMap.tiles[row][col] = emptyTile;
 
         if (!this.gameState.respawnQueue) this.gameState.respawnQueue = [];
+        const respawnSec = Math.max(55, (nodeConfig.respawnTimeSec || 30) * 3);
         this.gameState.respawnQueue.push({
             mapId: currentMap.id,
             row,
             col,
             tileId: originalTileId,
-            respawnAt: performance.now() + (nodeConfig.respawnTimeSec * 1000)
+            respawnAt: performance.now() + (respawnSec * 1000)
         });
 
+        // 6. 嚴格控制產量：每次精準產出 1~2 個
         const pickedY = this.pickSingleYieldItem(nodeConfig.yields);
-        let qty = GatheringFormulas.rollGatherQuantity(pickedY.min, pickedY.max);
-        const afterDouble = GatheringFormulas.checkDoubleDrop(qty, bestTool.doubleDropChance);
+        let qty = Math.random() < 0.25 ? 2 : 1;
+        const afterDouble = GatheringFormulas.checkDoubleDrop(qty, bestTool.doubleDropChance || 0);
         const doubleTriggered = afterDouble > qty;
         qty = afterDouble;
 
         player.addItem(pickedY.materialId, qty);
 
         const itemName = Items[pickedY.materialId]?.name || pickedY.materialId;
-        const expGain = nodeConfig.expReward || 20;
+        const expGain = nodeConfig.expReward || 15;
         player.exp = (player.exp || 0) + expGain;
 
-        const colorMap = { logging: '#734623', mining: '#9badb7', crystal_vein: '#42c5f5', harvesting: '#71aa34', scavenging: '#f7d51d' };
-
         eventBus.emit('PLAY_SOUND', 'collect');
-        eventBus.emit('SPAWN_PARTICLES', { col, row, color: colorMap[nodeConfig.nodeType] || '#f7d51d', count: 14 });
-        eventBus.emit('SHOW_TOAST', `採集獲得：【${itemName} x${qty}】${doubleTriggered ? ' (★工具雙倍!)' : ''} +${expGain} EXP`);
+        eventBus.emit('SPAWN_PARTICLES', { col, row, color: pColor, count: 18 });
+        eventBus.emit('SHOW_TOAST', `✨ 採獲：【${itemName} x${qty}】${doubleTriggered ? ' (★工具暴擊雙倍!)' : ''} (+${expGain} EXP ｜ 背包 ${loadInfo.totalCount + qty}/${loadInfo.maxCap})`);
         eventBus.emit('CHECK_LEVEL_UP');
         eventBus.emit('HUD_UPDATE');
         this.updateContextActionUI();
+
+        // 7. 稀有晶礦與秘寶箱守衛突襲 (28% 機率)
+        if ((nodeConfig.nodeType === 'crystal_vein' || nodeConfig.nodeType === 'scavenging') && Math.random() < 0.28) {
+            setTimeout(() => {
+                if (this.gameState.currentState === 'EXPLORATION') {
+                    eventBus.emit('SHOW_TOAST', `⚠️ 採集【${nodeConfig.name}】驚動了潛伏的資源守護魔物！`);
+                    eventBus.emit('ENCOUNTER_ENEMY', 'random_monster');
+                }
+            }, 350);
+        }
     }
 
     bindKeys() {
@@ -397,10 +492,12 @@ export class MovementSystem {
         if (selectedItemLabel) selectedItemLabel.innerHTML = `${itemData.name} (${count})`;
     }
 
-     handleMove(dir) {
+    handleMove(dir) {
+        // 100ms 防連跳鎖，確保手機點一下絕不跳 3 格
         const now = performance.now();
         if (this._lastMoveTime && now - this._lastMoveTime < 100) return;
         this._lastMoveTime = now;
+
         const dialogLayer = document.getElementById('pixel-dialog-layer');
         if (dialogLayer && dialogLayer.style.display === 'flex') {
             dialogLayer.style.display = 'none';
@@ -446,12 +543,34 @@ export class MovementSystem {
                 }
             }
 
+            // 航海門檻：需造出「遠洋白帆船 (sailboat)」才可踏入水格航行
+            const hasBoat = player.equipment.includes('sailboat') || (player.inventory['sailboat'] || 0) > 0;
+            if (targetTile === 7 && !hasBoat) {
+                eventBus.emit('SHOW_TOAST', '⛵ 前方是深水海域！請先於【⚒️ 製作 -> 工具】造出「遠洋白帆船」才能下海航行！');
+                eventBus.emit('PLAY_SOUND', 'bump');
+                this.updateContextActionUI();
+                return;
+            }
+
             const walkableTiles = [0, 2, 7, 11, 12, 13, 14, 15, 18, 20, 30, 31, 32, 33, 34, 40, 42, 45];
 
             if (walkableTiles.includes(targetTile)) {
                 player.col = targetCol;
                 player.row = targetRow;
                 player.isSailing = (targetTile === 7);
+
+                // 野外長途探索微幅消耗體力 (每 18 步扣 1 HP)
+                if (currentMap.id !== 'safe_camp') {
+                    this.stepHungerCounter++;
+                    if (this.stepHungerCounter >= 18) {
+                        this.stepHungerCounter = 0;
+                        if (player.hp > 15) {
+                            player.hp -= 1;
+                            eventBus.emit('HUD_UPDATE');
+                        }
+                    }
+                }
+
                 this.updateContextActionUI();
                 eventBus.emit('SAVE_GAME');
 
@@ -473,7 +592,7 @@ export class MovementSystem {
                 if (currentMap.id !== 'safe_camp' && targetTile !== 7) {
                     const rand = Math.random();
                     if (rand < 0.015) eventBus.emit('GOBLIN_ENCOUNTER');
-                    else if (rand < 0.065) eventBus.emit('ENCOUNTER_ENEMY', 'random_monster');
+                    else if (rand < 0.075) eventBus.emit('ENCOUNTER_ENEMY', 'random_monster');
                 }
             } else {
                 this.updateContextActionUI();
@@ -528,6 +647,11 @@ export class MovementSystem {
 
             if (targetTile === 0) {
                 if (player.equipment.includes('shovel') || player.equipment.includes('steel_shovel') || (player.inventory['steel_shovel'] || 0) > 0) {
+                    if (player.hp <= 8) {
+                        eventBus.emit('SHOW_TOAST', '💦 體力過低無法挖掘地面！請先補充食物。');
+                        return;
+                    }
+                    player.hp -= 3;
                     eventBus.emit('DIG_TREASURE');
                 }
             }
@@ -554,10 +678,10 @@ export class MovementSystem {
             else if (targetTile === 50) {
                 player.hp = player.maxHp;
                 player.mp = player.maxMp || 60;
-                player.addItem('MAT_210', 2);
+                player.addItem('MAT_210', 1);
                 eventBus.emit('PLAY_SOUND', 'collect');
                 eventBus.emit('SPAWN_PARTICLES', { col: targetCol, row: targetRow, color: '#42c5f5', count: 18 });
-                eventBus.emit('SHOW_TOAST', '飲用治癒之泉：HP/MP 全滿，獲得 +2 清澈泉水！');
+                eventBus.emit('SHOW_TOAST', '💧 飲用治癒之泉：體力與魔力完全恢復，並裝滿【清澈泉水 x1】！');
                 eventBus.emit('HUD_UPDATE');
             }
             else if (targetTile === 51) {
@@ -590,6 +714,12 @@ export class MovementSystem {
             else if (targetTile === 5) { eventBus.emit('BOSS_ENCOUNTER'); } 
             else if (targetTile === 6) { eventBus.emit('OPEN_MERCHANT'); } 
             else if (targetTile === 7 || targetTile === 16 || targetTile === 40) { 
+                const hasRod = player.equipment.includes('fishing_rod') || (player.inventory['fishing_rod'] || 0) > 0;
+                if (!hasRod) {
+                    eventBus.emit('PLAY_SOUND', 'bump');
+                    eventBus.emit('SHOW_TOAST', '🎣 尚未持有釣竿！請先於【⚒️ 製作 -> 工具】製作「青竹釣魚竿」！');
+                    return;
+                }
                 eventBus.emit('START_FISHING');
             } 
             else if (targetTile === 8) {
@@ -598,7 +728,7 @@ export class MovementSystem {
                     eventBus.emit('SPAWN_PARTICLES', { col: targetCol, row: targetRow, color: '#d93829', count: 20 });
                     eventBus.emit('SHOW_TOAST', '轟隆！炸開了裂縫石牆！');
                     eventBus.emit('PLAY_SOUND', 'bump');
-                } else { eventBus.emit('SHOW_TOAST', '牆上有裂縫，需要【開山炸藥】才能炸開！'); eventBus.emit('PLAY_SOUND', 'bump'); }
+                } else { eventBus.emit('SHOW_TOAST', '牆上有裂縫，需要【開山火藥桶】才能炸開！'); eventBus.emit('PLAY_SOUND', 'bump'); }
             }
             else if (targetTile === 12) {
                 if ((player.inventory['seed'] || 0) > 0 || (player.inventory['MAT_209'] || 0) > 0) {
@@ -607,16 +737,16 @@ export class MovementSystem {
                     currentMap.tiles[targetRow][targetCol] = 13;
                     eventBus.emit('PLAY_SOUND', 'collect');
                     eventBus.emit('PLANT_SEED', { row: targetRow, col: targetCol });
-                    eventBus.emit('SHOW_TOAST', '播種成功，等待作物成熟...');
+                    eventBus.emit('SHOW_TOAST', '🌱 播種成功，等待作物成熟...');
                     eventBus.emit('HUD_UPDATE');
                 } else { eventBus.emit('SHOW_TOAST', '耕地空置中，需要【種子】才能播種！'); }
             }
             else if (targetTile === 14) {
                 currentMap.tiles[targetRow][targetCol] = 12;
-                player.addItem('MAT_201', 2); player.addItem('magic_herb', 2);
+                player.addItem('MAT_201', 2);
                 eventBus.emit('PLAY_SOUND', 'collect');
                 eventBus.emit('SPAWN_PARTICLES', { col: targetCol, row: targetRow, color: '#71aa34' });
-                eventBus.emit('SHOW_TOAST', '收成溫室作物：獲得【止血草 x2】');
+                eventBus.emit('SHOW_TOAST', '🌿 收成溫室作物：獲得【止血草 x2】');
                 eventBus.emit('HUD_UPDATE');
             }
             this.updateContextActionUI();

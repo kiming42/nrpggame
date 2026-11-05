@@ -1699,24 +1699,20 @@ export class Game {
             }
 
             this.respawnTimer += deltaTime;
-            if (this.respawnTimer > 1500) { 
+            if (this.respawnTimer > 12000) { 
                 this.respawnTimer = 0;
                 if (['starter_island', 'desert_ruins', 'poison_swamp', 'ice_ruins', 'deep_sea', 'clockwork', 'floating'].includes(this.gameState.currentMap.id)) {
                     const map = this.gameState.currentMap;
-                    for (let i = 0; i < 6; i++) {
-                        const r = Math.floor(Math.random() * map.rows);
-                        const c = Math.floor(Math.random() * map.cols);
-                        if (map.tiles[r][c] === 0 && !(this.gameState.player.row === r && this.gameState.player.col === c)) {
-                            const spawnChance = Math.random();
-                            if (this.gameState.weather === 'RAIN' && spawnChance < 0.05) map.tiles[r][c] = 15; 
-                            else if (spawnChance < 0.03) map.tiles[r][c] = 1;  
-                            else if (spawnChance < 0.04) map.tiles[r][c] = 3;  
-                            else if (spawnChance < 0.048) map.tiles[r][c] = 47; 
-                            else if (spawnChance < 0.055) map.tiles[r][c] = 15; 
+                    const r = 3 + Math.floor(Math.random() * (map.rows - 6));
+                    const c = 3 + Math.floor(Math.random() * (map.cols - 6));
+                    if (map.tiles[r] && map.tiles[r][c] === 0 && !(this.gameState.player.row === r && this.gameState.player.col === c)) {
+                        const spawnChance = Math.random();
+                        if (this.gameState.weather === 'RAIN' && spawnChance < 0.08) map.tiles[r][c] = 15; 
+                        else if (spawnChance < 0.04) map.tiles[r][c] = 1;  
+                        else if (spawnChance < 0.06) map.tiles[r][c] = 47;
                         }
                     }
                 }
-            }
 
             for (let i = this.gameState.crops.length - 1; i >= 0; i--) {
                 let crop = this.gameState.crops[i];
