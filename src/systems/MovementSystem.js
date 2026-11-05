@@ -96,13 +96,15 @@ export class MovementSystem {
                 const { player, currentMap } = this.gameState;
                 if (!player || !currentMap) return;
 
-                const tileSize = this.gameState.tileSize || 48;
-                const viewW = this.gameState.viewWidth || 960;
-                const viewH = this.gameState.viewHeight || 540;
+                const cols = currentMap.cols || 15;
+                const rows = currentMap.rows || 15;
+// 🌟 請將 src/systems/MovementSystem.js 內 handleCanvasTap 的 tapCol / tapRow 計算改為以下 6 行：
+                const viewW = this.gameState.viewWidth || 480;
+                const viewH = this.gameState.viewHeight || 320;
                 const camX = this.gameState.cameraX || 0;
                 const camY = this.gameState.cameraY || 0;
-                const tapCol = Math.floor((((e.clientX - rect.left) / rect.width) * viewW + camX) / tileSize);
-                const tapRow = Math.floor((((e.clientY - rect.top) / rect.height) * viewH + camY) / tileSize);
+                const tapCol = Math.floor((((clientX - rect.left) / rect.width) * viewW + camX) / 32);
+                const tapRow = Math.floor((((clientY - rect.top) / rect.height) * viewH + camY) / 32);
 
                 const dCol = tapCol - player.col;
                 const dRow = tapRow - player.row;
