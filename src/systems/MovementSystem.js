@@ -20,9 +20,13 @@ export class MovementSystem {
         setTimeout(() => this.updateContextActionUI(), 200);
     }
 
-    // 🌟 徹底修復手機虛擬方向鍵、大圓鈕與「直接點擊螢幕畫面移動」
+// 🌟 請替換 src/systems/MovementSystem.js 內的 bindMobileTouchAndCanvasTap()：
     bindMobileTouchAndCanvasTap() {
         const stopHoldMove = () => {
+            if (this.holdStartTimeout) {
+                clearTimeout(this.holdStartTimeout);
+                this.holdStartTimeout = null;
+            }
             if (this.holdMoveInterval) {
                 clearInterval(this.holdMoveInterval);
                 this.holdMoveInterval = null;
@@ -30,37 +34,38 @@ export class MovementSystem {
         };
 
         ['up', 'down', 'left', 'right'].forEach(dir => {
-            const btn = document.getElementById(`btn-${dir}`);
-            if (!btn) return;
+            const oldBtn = document.getElementById(`btn-${dir}`);
+            if (!oldBtn) return;
 
-            // 清除舊的 onclick 避免衝突，改用原生 pointerdown / touchstart 並支援按住連走
-            btn.onmousedown = null;
-            btn.ontouchstart = null;
+            // 🌟 關鍵修復：用 cloneNode 徹底移除 Game.js 原本重複綁定的 click/touchstart 監聽器，杜絕「按一下行 3 格」！
+            const btn = oldBtn.cloneNode(true);
+            oldBtn.parentNode.replaceChild(btn, oldBtn);
 
             const startMove = (e) => {
                 if (e.cancelable) e.preventDefault();
                 e.stopPropagation();
-                this.handleMove(dir);
                 stopHoldMove();
-                this.holdMoveInterval = setInterval(() => {
-                    this.handleMove(dir);
-                }, 190);
+                this.handleMove(dir);
+                // 必須按住超過 320ms 才開始連續移動，輕點一下保證只走 1 格！
+                this.holdStartTimeout = setTimeout(() => {
+                    this.holdMoveInterval = setInterval(() => {
+                        this.handleMove(dir);
+                    }, 180);
+                }, 320);
             };
 
-            btn.addEventListener('touchstart', startMove, { passive: false });
-            btn.addEventListener('mousedown', startMove);
-            btn.addEventListener('touchend', stopHoldMove);
-            btn.addEventListener('touchcancel', stopHoldMove);
-            btn.addEventListener('mouseup', stopHoldMove);
-            btn.addEventListener('mouseleave', stopHoldMove);
+            btn.addEventListener('pointerdown', startMove);
+            btn.addEventListener('pointerup', stopHoldMove);
+            btn.addEventListener('pointercancel', stopHoldMove);
+            btn.addEventListener('pointerleave', stopHoldMove);
         });
 
-        // 右下角互動大圓鈕觸控確保
-        const actBtn = document.getElementById('btn-action');
-        if (actBtn) {
-            actBtn.onmousedown = null;
-            actBtn.ontouchstart = null;
-            const triggerAct = (e) => {
+        const oldActBtn = document.getElementById('btn-action');
+        if (oldActBtn) {
+            const actBtn = oldActBtn.cloneNode(true);
+            oldActBtn.parentNode.replaceChild(actBtn, oldActBtn);
+
+            actBtn.addEventListener('pointerdown', (e) => {
                 if (e.cancelable) e.preventDefault();
                 e.stopPropagation();
                 const dialogLayer = document.getElementById('pixel-dialog-layer');
@@ -73,16 +78,12 @@ export class MovementSystem {
                     return;
                 }
                 this.interact();
-            };
-            actBtn.addEventListener('touchstart', triggerAct, { passive: false });
-            actBtn.addEventListener('mousedown', triggerAct);
+            });
         }
 
-        // 🌟 新增：手指直接點擊遊戲畫面 (Canvas) 即可朝該方向移動，點擊身邊物件直接採集！
         const canvas = document.getElementById('gameCanvas');
         if (canvas) {
-            const handleCanvasTap = (clientX, clientY) => {
-                // 若有彈出選單則不觸發
+            canvas.addEventListener('pointerdown', (e) => {
                 const popup = document.getElementById('quick-food-popup');
                 if (popup && popup.style.display === 'block') {
                     popup.style.display = 'none';
@@ -95,26 +96,22 @@ export class MovementSystem {
                 const { player, currentMap } = this.gameState;
                 if (!player || !currentMap) return;
 
-                const cols = currentMap.cols || 15;
-                const rows = currentMap.rows || 15;
-// 🌟 請將 src/systems/MovementSystem.js 內 handleCanvasTap 的 tapCol / tapRow 計算改為以下 6 行：
-                const viewW = this.gameState.viewWidth || 480;
-                const viewH = this.gameState.viewHeight || 320;
+                const tileSize = this.gameState.tileSize || 48;
+                const viewW = this.gameState.viewWidth || 960;
+                const viewH = this.gameState.viewHeight || 540;
                 const camX = this.gameState.cameraX || 0;
                 const camY = this.gameState.cameraY || 0;
-                const tapCol = Math.floor((((clientX - rect.left) / rect.width) * viewW + camX) / 32);
-                const tapRow = Math.floor((((clientY - rect.top) / rect.height) * viewH + camY) / 32);
+                const tapCol = Math.floor((((e.clientX - rect.left) / rect.width) * viewW + camX) / tileSize);
+                const tapRow = Math.floor((((e.clientY - rect.top) / rect.height) * viewH + camY) / tileSize);
 
                 const dCol = tapCol - player.col;
                 const dRow = tapRow - player.row;
 
-                // 點擊角色自己腳下 -> 直接觸發面向方向的互動
                 if (dCol === 0 && dRow === 0) {
                     this.interact();
                     return;
                 }
 
-                // 點擊上下左右緊鄰的 1 格：若是樹/石頭/寶箱/NPC 等不可行走物件，自動轉向並直接採集！
                 if (Math.abs(dCol) + Math.abs(dRow) === 1) {
                     const dir = dCol === 1 ? 'right' : (dCol === -1 ? 'left' : (dRow === 1 ? 'down' : 'up'));
                     player.direction = dir;
@@ -129,34 +126,8 @@ export class MovementSystem {
                     return;
                 }
 
-                // 點擊較遠處：朝差距較大的軸向移動一步
-                let primaryDir = null;
-                let secondaryDir = null;
-                if (Math.abs(dCol) >= Math.abs(dRow)) {
-                    primaryDir = dCol > 0 ? 'right' : 'left';
-                    if (dRow !== 0) secondaryDir = dRow > 0 ? 'down' : 'up';
-                } else {
-                    primaryDir = dRow > 0 ? 'down' : 'up';
-                    if (dCol !== 0) secondaryDir = dCol > 0 ? 'right' : 'left';
-                }
-
-                const oldCol = player.col, oldRow = player.row;
+                let primaryDir = Math.abs(dCol) >= Math.abs(dRow) ? (dCol > 0 ? 'right' : 'left') : (dRow > 0 ? 'down' : 'up');
                 this.handleMove(primaryDir);
-                // 若主方向被樹或石頭擋住沒能移動，自動嘗試次方向繞路
-                if (player.col === oldCol && player.row === oldRow && secondaryDir) {
-                    this.handleMove(secondaryDir);
-                }
-            };
-
-            canvas.addEventListener('touchstart', (e) => {
-                if (e.touches && e.touches.length === 1) {
-                    if (e.cancelable) e.preventDefault();
-                    handleCanvasTap(e.touches[0].clientX, e.touches[0].clientY);
-                }
-            }, { passive: false });
-
-            canvas.addEventListener('mousedown', (e) => {
-                handleCanvasTap(e.clientX, e.clientY);
             });
         }
     }
@@ -424,7 +395,10 @@ export class MovementSystem {
         if (selectedItemLabel) selectedItemLabel.innerHTML = `${itemData.name} (${count})`;
     }
 
-    handleMove(dir) {
+     handleMove(dir) {
+        const now = performance.now();
+        if (this._lastMoveTime && now - this._lastMoveTime < 100) return;
+        this._lastMoveTime = now;
         const dialogLayer = document.getElementById('pixel-dialog-layer');
         if (dialogLayer && dialogLayer.style.display === 'flex') {
             dialogLayer.style.display = 'none';

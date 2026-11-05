@@ -601,18 +601,20 @@ export class UIManager {
         list.appendChild(scrollBody);
     }
 
+ // 🌟 請替換 src/view/UIManager.js 內 renderArchipelagoWorldMap 的開頭部分 (自動縮小適應視窗高度)：
     renderArchipelagoWorldMap(container) {
         const wrap = document.createElement('div');
-        wrap.style.cssText = 'flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative;';
+        wrap.style.cssText = 'flex:1; min-height:0; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative; overflow:hidden; padding:2px 6px;';
 
         const canvas = document.createElement('canvas');
         canvas.width = 640;
         canvas.height = 350;
-        canvas.style.cssText = 'width:100%; max-width:640px; height:auto; border:3px solid #2b1d0e; cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,0.4);';
+        // 🌟 關鍵修復：同時限制 max-height: calc(100% - 22px) 與 width: auto，讓海圖在手機橫向視窗內自動縮小，100% 看到底部所有島嶼！
+        canvas.style.cssText = 'max-width:100%; max-height:calc(100% - 22px); width:auto; height:auto; object-fit:contain; border:3px solid #2b1d0e; cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,0.4);';
         wrap.appendChild(canvas);
 
         const hintBar = document.createElement('div');
-        hintBar.style.cssText = 'font-size:12px; font-weight:900; color:#3b2614; margin-top:4px;';
+        hintBar.style.cssText = 'font-size:11px; font-weight:900; color:#3b2614; margin-top:3px; flex-shrink:0;';
         hintBar.innerText = '⛵ 點擊海圖上的島嶼可直接揚帆傳送（紅旗為當前所在島嶼）';
         wrap.appendChild(hintBar);
         container.appendChild(wrap);
