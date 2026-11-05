@@ -1,7 +1,6 @@
 // src/data/maps.js
 export const TILE_SIZE = 48;
 
-// 🌟 將每張冒險地圖全面擴大至 28x28 格，並注入對應 Tier 的林木、礦脈、草藥叢、秘寶箱、治癒之泉(50)與知識方尖碑(51)
 function expandMapToMega(id, chapterName, tier, baseTiles, borderTile, biomeDecorTile) {
     const targetSize = 28;
     const oldRows = baseTiles.length;
@@ -11,45 +10,76 @@ function expandMapToMega(id, chapterName, tier, baseTiles, borderTile, biomeDeco
     for (let r = 0; r < targetSize; r++) {
         const rowArr = [];
         for (let c = 0; c < targetSize; c++) {
-            // 最外圍一圈 (r=0, r=27, c=0, c=27) 固定為邊界圖塊 (海水/岩石/冰晶)
             if (r === 0 || r === targetSize - 1 || c === 0 || c === targetSize - 1) {
                 rowArr.push(borderTile);
                 continue;
             }
-            // 完整保留原本地圖內部的所有內容 (包含安全基地帳篷 11、商會 6、傳送門 2/30/31/32/33/34、裂縫牆 8、寶箱 9)
             if (r < oldRows - 1 && c < oldCols - 1) {
                 rowArr.push(baseTiles[r][c]);
                 continue;
             }
             const seed = (r * 37 + c * 23 + tier * 11) % 100;
-            if ((r === 14 && c === 14) || (r === 22 && c === 22)) rowArr.push(50); // ⛲ 治癒之泉
-            else if ((r === 16 && c === 18) || (r === 24 && c === 14)) rowArr.push(51); // 🗿 知識方尖碑
-            else if ((r === 19 && c === 12) || (r === 25 && c === 24)) rowArr.push(9); // 秘寶箱
+            if ((r === 14 && c === 14) || (r === 22 && c === 22)) rowArr.push(50);
+            else if ((r === 16 && c === 18) || (r === 24 && c === 14)) rowArr.push(51);
+            else if ((r === 19 && c === 12) || (r === 25 && c === 24)) rowArr.push(9);
             else if (seed < 12) rowArr.push(biomeDecorTile);
-            else if (seed >= 12 && seed < 17) rowArr.push(1);  // 樹木/木材採集點
-            else if (seed >= 17 && seed < 21) rowArr.push(47); // 礦脈採集點 A
-            else if (seed >= 21 && seed < 25) rowArr.push(48); // 高階晶礦採集點 B
-            else if (seed >= 25 && seed < 29) rowArr.push(15); // 野生草藥/紅蘑菇採集點
-            else if (seed >= 29 && seed < 32) rowArr.push(49); // 煤炭/元素結晶點
+            else if (seed >= 12 && seed < 17) rowArr.push(1);
+            else if (seed >= 17 && seed < 21) rowArr.push(47);
+            else if (seed >= 21 && seed < 25) rowArr.push(48);
+            else if (seed >= 25 && seed < 29) rowArr.push(15);
+            else if (seed >= 29 && seed < 32) rowArr.push(49);
             else rowArr.push(id === 'ice_ruins' ? 18 : (id === 'deep_sea' ? 40 : (id === 'clockwork' ? 42 : 0)));
         }
         newTiles.push(rowArr);
     }
 
-    // 確保第一章新手島的安全基地帳篷(11)、商會(6)與傳送門(2)絕對不會被覆蓋
+    // 🌟 強制鎖死每張地圖的傳送門與重要設施座標，保證 100% 存在且四周暢通！
     if (id === 'starter_island') {
-        newTiles[1][4] = 11; // 頂部顯眼位置：安全基地營橙色帳篷
-        newTiles[1][8] = 11; // 右上原位也保留安全基地營帳篷
+        newTiles[1][8] = 11; // 安全基地營帳篷
+        newTiles[1][3] = 11; // 出生點上方備用基地帳篷
         newTiles[2][6] = 6;  // 商會
-        newTiles[7][8] = 2;  // 前往第二章傳送門
+        newTiles[7][8] = 2;  // 往第二章傳送門
+        newTiles[7][7] = 0;
+        newTiles[6][8] = 0;
+    } else if (id === 'desert_ruins') {
+        newTiles[1][1] = 2;   // 返第一章傳送門
+        newTiles[1][2] = 0;
+        newTiles[2][1] = 0;
+        newTiles[10][9] = 30; // 往第三章傳送門
+        newTiles[10][8] = 0;
+    } else if (id === 'poison_swamp') {
+        newTiles[1][1] = 2;   // 返第二章傳送門
+        newTiles[1][2] = 0;
+        newTiles[10][9] = 31; // 往第四章傳送門
+        newTiles[10][8] = 0;
+    } else if (id === 'ice_ruins') {
+        newTiles[1][1] = 30;  // 返第三章傳送門
+        newTiles[1][2] = 18;
+        newTiles[10][9] = 32; // 往第五章傳送門
+        newTiles[10][8] = 18;
+    } else if (id === 'deep_sea') {
+        newTiles[1][1] = 31;  // 返第四章傳送門
+        newTiles[1][2] = 40;
+        newTiles[10][9] = 33; // 往第六章傳送門
+        newTiles[10][8] = 40;
+    } else if (id === 'clockwork') {
+        newTiles[1][1] = 32;  // 返第五章傳送門
+        newTiles[1][2] = 42;
+        newTiles[10][9] = 34; // 往第七章傳送門
+        newTiles[10][8] = 42;
+    } else if (id === 'floating') {
+        newTiles[1][1] = 33;  // 返第六章傳送門
+        newTiles[1][2] = 0;
+        newTiles[10][9] = 2;  // 往終章 Boss 傳送門
+        newTiles[10][8] = 0;
     }
 
     return { id, chapterName, tier, cols: targetSize, rows: targetSize, tiles: newTiles };
 }
 
 export const testMap = expandMapToMega('starter_island', '第一章(T1)：翠綠新手荒島', 1, [
-    [7,7,7,7,7,7,7,7,7,7], [7,0,0,0,11,0,0,0,11,7], [7,0,0,0,1,0,6,0,0,7], [7,0,1,0,0,0,1,1,0,7], [7,0,1,0,0,0,0,1,0,7], [7,0,0,0,0,0,0,0,0,7], [1,1,1,0,0,1,1,0,0,1], [1,0,0,0,0,1,0,0,2,1], [1,0,0,0,0,0,0,0,0,1], [1,1,1,1,1,1,1,1,1,1]
-], 7, 17);
+    [7,7,7,7,7,7,7,7,7,7], [7,0,0,0,1,0,0,0,11,7], [7,0,0,0,1,0,6,0,0,7], [7,0,1,0,0,0,1,1,0,7], [7,0,1,0,0,0,0,1,0,7], [7,0,0,0,0,0,0,0,0,7], [1,1,1,0,0,1,1,0,0,1], [1,0,0,0,0,1,0,0,2,1], [1,0,0,0,0,0,0,0,0,1], [1,1,1,1,1,1,1,1,1,1]
+], 7, 1);
 
 export const level2Map = expandMapToMega('desert_ruins', '第二章(T1~T2)：時光沙漏遺跡', 1, [
     [1,1,1,1,1,1,1,1,1,1,1,1], [1,2,0,3,0,0,1,0,4,0,0,1], [1,0,10,10,10,0,1,0,1,1,0,1], [1,0,10,9,8,0,3,0,0,1,0,1], [1,0,10,10,10,1,1,1,0,1,0,1], [1,3,0,0,1,0,0,1,0,3,0,1], [1,1,1,0,1,0,0,1,0,1,1,1], [1,0,0,0,1,1,0,1,0,4,0,1], [1,0,1,0,0,3,0,0,0,1,0,1], [1,0,1,1,1,1,1,1,1,1,0,1], [1,4,0,0,0,0,0,3,0,30,0,1], [1,1,1,1,1,1,1,1,1,1,1,1]
