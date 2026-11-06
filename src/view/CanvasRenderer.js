@@ -633,81 +633,11 @@ export class CanvasRenderer {
                 else if (tile === 51) {
                     if (!this.drawSprite('obelisk', x, y)) this.drawPortalTile(x, y, gameTime);
                 }
-
-                // 3. 探索戰爭迷霧 (Fog of War)：重要地標如傳送門、基地帳篷與商會永遠微微透光提示位置
-                if (currentMap.id !== 'safe_camp') {
-                    const distSq = (r - player.row) * (r - player.row) + (c - player.col) * (c - player.col);
-                    const isLandmark = [2, 6, 11, 30, 31, 32, 33, 34].includes(tile);
-                    const isExplored = exploredSet && exploredSet.has(`${r}_${c}`);
-
-                    if (!isExplored && !isLandmark) {
-                        // 完全未探索的未知荒島迷霧
-                        this.ctx.fillStyle = 'rgba(11, 15, 25, 0.82)';
-                        this.ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
-                        if ((r + c) % 2 === 0) {
-                            this.ctx.fillStyle = 'rgba(30, 41, 59, 0.35)';
-                            this.ctx.fillRect(x + 8, y + 16, 32, 12);
-                        }
-                    } else if (distSq > (sightRadius + 1) * (sightRadius + 1)) {
-                        // 已探索但目前不在視野範圍內的微暗戰爭迷霧
-                        this.ctx.fillStyle = 'rgba(15, 23, 42, 0.32)';
-                        this.ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
-                    }
-                }
             }
         }
 
-        // 🌟 [進階改造 A] 在安全基地營 (safe_camp) 繪製實體駐守 NPC 與頭頂名牌
-        if (currentMap.id === 'safe_camp') {
-            const campNpcs = [
-                { row: 8, col: 6,  name: '公會會長 亞瑟', role: '📜 任務/情報', color: '#2563eb', hatColor: '#facc15' },
-                { row: 8, col: 10, name: '鐵匠大師 托爾', role: '🏰 據點升級', color: '#dc2626', hatColor: '#475569' },
-                { row: 8, col: 13, name: '煉金導師 薇薇安', role: '⚗️ 治療/秘訣', color: '#7c3aed', hatColor: '#a855f7' }
-            ];
-            const npcBob = Math.sin(gameTime * 0.06) > 0 ? -2 : 0;
-
-            campNpcs.forEach(npc => {
-                const nx = npc.col * TILE_SIZE;
-                const ny = npc.row * TILE_SIZE;
-
-                // 腳下陰影
-                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-                this.ctx.beginPath();
-                this.ctx.ellipse(nx + 24, ny + 42, 13, 5, 0, 0, Math.PI * 2);
-                this.ctx.fill();
-
-                // 繪製精緻像素 NPC 小人
-                this.ctx.fillStyle = '#000000';
-                this.ctx.fillRect(nx + 12, ny + 10 + npcBob, 24, 30);
-                // 身體服裝
-                this.ctx.fillStyle = npc.color;
-                this.ctx.fillRect(nx + 14, ny + 24 + npcBob, 20, 14);
-                // 臉部
-                this.ctx.fillStyle = '#fed7aa';
-                this.ctx.fillRect(nx + 15, ny + 14 + npcBob, 18, 10);
-                // 眼睛
-                this.ctx.fillStyle = '#000000';
-                this.ctx.fillRect(nx + 18, ny + 17 + npcBob, 3, 3);
-                this.ctx.fillRect(nx + 27, ny + 17 + npcBob, 3, 3);
-                // 帽子/頭飾
-                this.ctx.fillStyle = npc.hatColor;
-                this.ctx.fillRect(nx + 13, ny + 9 + npcBob, 22, 6);
-
-                // 頭頂職稱與名牌
-                this.ctx.font = 'bold 10px sans-serif';
-                this.ctx.textAlign = 'center';
-                this.ctx.fillStyle = 'rgba(20, 16, 19, 0.85)';
-                this.ctx.fillRect(nx - 14, ny - 14, 76, 20);
-                this.ctx.strokeStyle = '#facc15';
-                this.ctx.lineWidth = 1;
-                this.ctx.strokeRect(nx - 14, ny - 14, 76, 20);
-                this.ctx.fillStyle = '#fde047';
-                this.ctx.fillText(npc.role, nx + 24, ny - 1);
-            });
-        }
-        
-        // 4. 繪製玩家角色與腳下柔和陰影
-        const bobOffset = Math.sin(gameTime * 0.08) > 0 ? -3 : 0;
+        // 繪製玩家角色
+        const bobOffset = Math.sin(gameTime * 0.08) > 0 ? -2 : 0;
         const px = player.col * TILE_SIZE;
         const py = player.row * TILE_SIZE;
 
