@@ -31,15 +31,16 @@ export class MovementSystem {
         setTimeout(() => this.updateContextActionUI(), 200);
     }
 
-    // 計算背包當前總物品數與負重上限
-    getInventoryLoadInfo() {
+     getInventoryLoadInfo() {
         const p = this.gameState.player;
         let totalCount = 0;
         for (const [k, cnt] of Object.entries(p.inventory || {})) {
             if (cnt > 0 && k !== 'truth_fragment') totalCount += cnt;
         }
         const hasBigBag = p.equipment.includes('ACC_BAG_T1') || p.equipment.includes('ACC_BAG_T3') || (p.inventory['ACC_BAG_T1'] || 0) > 0;
-        const maxCap = hasBigBag ? 250 : 120;
+        const storageLv = this.gameState.campBuildings?.storage || 0;
+        const baseCap = hasBigBag ? 250 : 120;
+        const maxCap = baseCap + (storageLv * 50);
         return { totalCount, maxCap, isFull: totalCount >= maxCap };
     }
 
@@ -556,6 +557,21 @@ export class MovementSystem {
                 eventBus.emit('HUD_UPDATE');
             }
 
+            // 🌟 [進階改造 A] 在安全基地營走向駐守 NPC 時，直接觸發視覺小說對話！
+            if (currentMap.id === 'safe_camp') {
+                const campNpcMap = {
+                    '8_6': 'guild_master',
+                    '8_10': 'blacksmith',
+                    '8_13': 'alchemist'
+                };
+                const npcKey = campNpcMap[`${targetRow}_${targetCol}`];
+                if (npcKey) {
+                    eventBus.emit('OPEN_CAMP_NPC', npcKey);
+                    this.updateContextActionUI();
+                    return;
+                }
+            }
+
             const walkableTiles = [0, 2, 7, 11, 12, 13, 14, 15, 18, 20, 30, 31, 32, 33, 34, 40, 42, 45];
 
             if (walkableTiles.includes(targetTile)) {
@@ -622,6 +638,19 @@ export class MovementSystem {
         else if (player.direction === 'left') targetCol -= 1;
         else if (player.direction === 'right') targetCol += 1;
 
+        if (currentMap.id === 'safe_camp') {
+                const campNpcMap = {
+                    '8_6': 'guild_master',
+                    '8_10': 'blacksmith',
+                    '8_13': 'alchemist'
+                };
+                const npcKey = campNpcMap[`${targetRow}_${targetCol}`];
+                if (npcKey) {
+                    eventBus.emit('OPEN_CAMP_NPC', npcKey);
+                    return;
+                }
+            }
+            
         if (targetCol >= 0 && targetCol < currentMap.cols && targetRow >= 0 && targetRow < currentMap.rows) {
             const targetTile = currentMap.tiles[targetRow][targetCol];
             

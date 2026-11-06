@@ -57,6 +57,7 @@ export class UIManager {
         this.bindEvents();
         this.renderSubjectSettings();
         this.renderSysConfigTab();
+        this.initCampHubAndUpgrades();
     }
 
     openToTab(tabId, subOption = null) {
@@ -1177,5 +1178,285 @@ export class UIManager {
             });
         });
         eventBus.emit('UPDATE_SUBJECTS', this.activeUnits);
+    }
+
+    // =========================================================================
+    // 🏰 進階改造 A：主城實體 NPC 視覺小說對話框 & 據點設施升級系統 (消耗木石素材)
+    // =========================================================================
+    initCampHubAndUpgrades() {
+        // 初始化據點建築等級並套用屬性加成
+        try {
+            const savedCamp = localStorage.getItem('rpg_camp_buildings');
+            if (savedCamp && !this.gameState.campBuildings) {
+                this.gameState.campBuildings = JSON.parse(savedCamp);
+            }
+        } catch (e) {}
+
+        if (!this.gameState.campBuildings) {
+            this.gameState.campBuildings = { forge: 0, altar: 0, storage: 0, greenhouse: 0 };
+        }
+        this.applyCampBuildingBonuses();
+
+        // 在建造模式面板加入「🏰 據點設施升級」快捷按鈕
+        const buildUi = document.getElementById('build-mode-ui');
+        if (buildUi && !document.getElementById('btn-open-camp-upgrades')) {
+            const upgBtn = document.createElement('button');
+            upgBtn.id = 'btn-open-camp-upgrades';
+            upgBtn.className = 'px-btn success';
+            upgBtn.style.cssText = 'width:100%; margin-top:8px; padding:6px; font-size:13px;';
+            upgBtn.innerHTML = '🏰 打開【皇家據點設施升級】';
+            upgBtn.onclick = () => this.openCampUpgradeModal();
+            buildUi.appendChild(upgBtn);
+        }
+
+        eventBus.on('OPEN_CAMP_NPC', (npcId) => {
+            this.openCampNpcDialog(npcId);
+        });
+    }
+
+    saveCampBuildings() {
+        try {
+            localStorage.setItem('rpg_camp_buildings', JSON.stringify(this.gameState.campBuildings));
+        } catch (e) {}
+    }
+
+    applyCampBuildingBonuses() {
+        const p = this.gameState.player;
+        const b = this.gameState.campBuildings || { forge: 0, altar: 0, storage: 0, greenhouse: 0 };
+        if (!p._baseStatsBackup) {
+            p._baseStatsBackup = {
+                str: p.stats?.str || 10,
+                vit: p.stats?.vit || 10,
+                int: p.stats?.int || 10
+            };
+        }
+        // 將據點建築加成注入角色基礎能力與最大血魔
+        const bonusAtk = (b.forge || 0) * 15;
+        const bonusHp = (b.altar || 0) * 60;
+        const bonusMp = (b.altar || 0) * 15;
+        const bonusDef = (b.greenhouse || 0) * 12;
+
+        p.campBonusAtk = bonusAtk;
+        p.campBonusDef = bonusDef;
+
+        if (!p._origCalcAtk && typeof p.calcAtk === 'function') {
+            const origAtk = p.calcAtk.bind(p);
+            p._origCalcAtk = origAtk;
+            p.calcAtk = () => origAtk() + (p.campBonusAtk || 0);
+        }
+        if (!p._origCalcDef && typeof p.calcDef === 'function') {
+            const origDef = p.calcDef.bind(p);
+            p._origCalcDef = origDef;
+            p.calcDef = () => origDef() + (p.campBonusDef || 0);
+        }
+
+        const baseMaxHp = 100 + ((p.level || 1) - 1) * 20 + ((p.stats?.vit || 10) * 6);
+        p.maxHp = Math.max(p.maxHp || 160, baseMaxHp + bonusHp);
+        p.maxMp = Math.max(p.maxMp || 60, 60 + bonusMp);
+    }
+
+    openCampNpcDialog(npcId) {
+        const dialogLayer = document.getElementById('pixel-dialog-layer');
+        const titleEl = document.getElementById('pixel-dialog-title');
+        const textEl = document.getElementById('pixel-dialog-text');
+        if (!dialogLayer || !titleEl || !textEl) return;
+
+        const p = this.gameState.player;
+        const b = this.gameState.campBuildings || { forge: 0, altar: 0, storage: 0, greenhouse: 0 };
+
+        const npcConfigs = {
+            guild_master: {
+                name: '公會會長 亞瑟',
+                role: '冒險者公會總長',
+                avatar: '👑',
+                greeting: `「辛苦了，${p.name || 'Justin'}！無知迷霧仍在侵蝕外圍群島。\n\n目前你的公會榮譽等級為 Lv.${p.level || 1}。需要查看各島嶼的委託任務，還是打開群島海圖揚帆出征？」`,
+                actions: [
+                    { label: '📜 查看委託任務', fn: () => { dialogLayer.style.display = 'none'; this.openToTab('tab-quests', 'QUESTS'); } },
+                    { label: '⛵ 打開群島世界海圖', fn: () => { dialogLayer.style.display = 'none'; this.openToTab('tab-quests', 'WORLD_MAP'); } },
+                    { label: '🎯 討伐錯題懸賞錄', fn: () => { dialogLayer.style.display = 'none'; this.openToTab('tab-mistakes'); } }
+                ]
+            },
+            blacksmith: {
+                name: '鐵匠大師 托爾',
+                role: '皇家首席鍛造師',
+                avatar: '🔨',
+                greeting: `「哈哈！在野外收集到不少木材和圓石吧？別讓它們塞爆你的背包！\n\n把木頭與礦石交給我來【升級據點設施】，不僅能永久擴充倉庫容量，還能大幅提升你的攻擊力與血量上限！」`,
+                actions: [
+                    { label: '🏰 升級據點設施 (消耗木石)', fn: () => { dialogLayer.style.display = 'none'; this.openCampUpgradeModal(); } },
+                    { label: '⚒️ 進入武器與工具鍛造坊', fn: () => { dialogLayer.style.display = 'none'; this.openToTab('tab-crafting'); } },
+                    { label: '🧱 開啟營地自由建造模式', fn: () => { dialogLayer.style.display = 'none'; document.getElementById('btn-build-toggle')?.click(); } }
+                ]
+            },
+            alchemist: {
+                name: '煉金導師 薇薇安',
+                role: '王國首席草藥學者',
+                avatar: '⚗️',
+                greeting: `「歡迎來到煉金溫室！在荒島採集消耗了不少體力吧？\n\n我已經為你施展了免費的【聖光治癒術】恢復全部 HP 與 MP！如果你升級了『煉金藥草溫室 (目前 Lv.${b.greenhouse || 0})』，每次還能找我領取免費草藥補給喔！」`,
+                actions: [
+                    {
+                        label: '💚 免費恢復全部 HP/MP 並領取溫室草藥',
+                        fn: () => {
+                            p.hp = p.maxHp;
+                            p.mp = p.maxMp || 60;
+                            const herbBonus = Math.max(1, b.greenhouse || 1);
+                            p.addItem('MAT_201', herbBonus);
+                            eventBus.emit('PLAY_SOUND', 'collect');
+                            eventBus.emit('HUD_UPDATE');
+                            eventBus.emit('SHOW_TOAST', `✨ 體力魔力全滿！並領取溫室產出：【止血草 x${herbBonus}】！`);
+                            dialogLayer.style.display = 'none';
+                        }
+                    },
+                    { label: '💡 聽取各章節機關破關秘訣', fn: () => {
+                        textEl.innerHTML = `<div style="background:#fffdf7; border:2px solid #8c6239; padding:8px; border-radius:4px; font-size:12px; line-height:1.6;">
+                            <b>📌 荒島破關四大秘訣：</b><br>
+                            1. <b>第二章 (沙漠裂縫牆)</b>：需於【製作 -> 工具】合成「開山火藥桶」炸開裂牆。<br>
+                            2. <b>第三章 (劇毒迷瘴島)</b>：製作並穿戴「淨化防毒面具」可免疫毒水傷害。<br>
+                            3. <b>第六章 (泰坦發條島)</b>：紅色電子閘門需消耗「魔力電池」開啟。<br>
+                            4. <b>第七章 (星辰浮空島)</b>：跨越虛空深淵需裝備「精鋼飛索抓鉤」。
+                        </div>`;
+                    } },
+                    { label: '🏰 升級煉金藥草溫室', fn: () => { dialogLayer.style.display = 'none'; this.openCampUpgradeModal(); } }
+                ]
+            }
+        };
+
+        const cfg = npcConfigs[npcId] || npcConfigs.guild_master;
+        titleEl.innerHTML = `<span style="font-size:20px; margin-right:6px;">${cfg.avatar}</span>${cfg.name} <span style="font-size:12px; color:#b45309; margin-left:6px;">— ${cfg.role}</span>`;
+
+        textEl.innerHTML = `
+            <div style="margin-bottom:10px; line-height:1.55;">${cfg.greeting.replace(/\n/g, '<br>')}</div>
+            <div id="npc-vn-options" style="display:flex; flex-direction:column; gap:6px; margin-top:8px;"></div>
+        `;
+
+        const optBox = textEl.querySelector('#npc-vn-options');
+        cfg.actions.forEach(act => {
+            const btn = document.createElement('button');
+            btn.className = 'px-btn primary';
+            btn.style.cssText = 'width:100%; padding:8px 12px; font-size:13px; justify-content:flex-start; text-align:left;';
+            btn.innerText = act.label;
+            btn.onclick = act.fn;
+            optBox.appendChild(btn);
+        });
+
+        dialogLayer.style.display = 'flex';
+    }
+
+    // 🏰 皇家據點四大設施升級面板 (消耗過剩木材、圓石與金幣)
+    openCampUpgradeModal() {
+        const dialogLayer = document.getElementById('pixel-dialog-layer');
+        const titleEl = document.getElementById('pixel-dialog-title');
+        const textEl = document.getElementById('pixel-dialog-text');
+        if (!dialogLayer || !titleEl || !textEl) return;
+
+        const p = this.gameState.player;
+        const inv = p.inventory || {};
+        const b = this.gameState.campBuildings;
+
+        // 統計玩家身上的木材類與石材類總數 (優先消耗 MAT_001 橡木原木 與 MAT_051 圓石)
+        const woodCnt = (inv['MAT_001'] || 0) + (inv['wood'] || 0);
+        const stoneCnt = (inv['MAT_051'] || 0) + (inv['stone'] || 0);
+
+        const buildingsDef = [
+            {
+                key: 'forge',
+                name: '⚒️ 皇家鐵匠鍛造爐',
+                desc: '每級永久提升 <b>攻擊力 +15</b>',
+                curBonus: `目前加成：攻擊力 +${(b.forge || 0) * 15}`,
+                woodBase: 6,
+                stoneBase: 6,
+                goldBase: 150
+            },
+            {
+                key: 'altar',
+                name: '📚 遠古知識祭壇',
+                desc: '每級永久提升 <b>最大生命 +60 HP、魔力 +15 MP</b>',
+                curBonus: `目前加成：+${(b.altar || 0) * 60} HP / +${(b.altar || 0) * 15} MP`,
+                woodBase: 5,
+                stoneBase: 8,
+                goldBase: 150
+            },
+            {
+                key: 'storage',
+                name: '🎒 探險家大倉庫',
+                desc: '每級永久擴充 <b>背包負重上限 +50 格</b>',
+                curBonus: `目前加成：背包容量 +${(b.storage || 0) * 50} 格`,
+                woodBase: 8,
+                stoneBase: 4,
+                goldBase: 120
+            },
+            {
+                key: 'greenhouse',
+                name: '🌿 煉金藥草溫室',
+                desc: '每級永久提升 <b>防禦力 +12</b> 及每日免費草藥產量',
+                curBonus: `目前加成：防禦力 +${(b.greenhouse || 0) * 12}`,
+                woodBase: 6,
+                stoneBase: 5,
+                goldBase: 120
+            }
+        ];
+
+        titleEl.innerHTML = `🏰 皇家基地營 • 據點設施升級 <span style="font-size:12px; color:#15803d; margin-left:8px;">🪵木材:${woodCnt} ｜ 🪨圓石:${stoneCnt} ｜ 💰${p.gold || 0}G</span>`;
+
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex; flex-direction:column; gap:8px; max-height:310px; overflow-y:auto; padding-right:4px;';
+
+        buildingsDef.forEach(def => {
+            const curLv = b[def.key] || 0;
+            const isMax = curLv >= 5;
+            const nextLv = curLv + 1;
+            const reqWood = def.woodBase * nextLv;
+            const reqStone = def.stoneBase * nextLv;
+            const reqGold = def.goldBase * nextLv;
+
+            const canAfford = !isMax && woodCnt >= reqWood && stoneCnt >= reqStone && (p.gold || 0) >= reqGold;
+
+            const card = document.createElement('div');
+            card.style.cssText = 'background:#f3dbb3; border:2px solid #4a2e16; border-radius:4px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center; gap:8px;';
+            card.innerHTML = `
+                <div style="flex:1;">
+                    <div style="font-size:13px; font-weight:900; color:#2b1d0e;">
+                        ${def.name} <span style="background:#3b2614; color:#fde047; padding:1px 6px; border-radius:3px; font-size:11px;">Lv.${curLv}/5</span>
+                    </div>
+                    <div style="font-size:11px; color:#5c3a21;">${def.desc}（<span style="color:#15803d; font-weight:bold;">${def.curBonus}</span>）</div>
+                    ${!isMax ? `<div style="font-size:11px; color:${canAfford ? '#1e3a8a' : '#b91c1c'}; font-weight:bold; margin-top:2px;">升級需求：🪵橡木 x${reqWood}、🪨圓石 x${reqStone}、💰${reqGold} G</div>` : '<div style="font-size:11px; color:#15803d; font-weight:bold;">✨ 已達最高等級！</div>'}
+                </div>
+                <button class="px-btn ${canAfford ? 'success' : ''}" style="padding:6px 12px; font-size:12px; flex-shrink:0;" ${canAfford ? '' : 'disabled'}>
+                    ${isMax ? 'MAX' : '⬆️ 升級'}
+                </button>
+            `;
+
+            if (canAfford) {
+                card.querySelector('button').onclick = () => {
+                    // 扣除木材
+                    let wLeft = reqWood;
+                    const m001 = inv['MAT_001'] || 0;
+                    if (m001 >= wLeft) { p.removeItem('MAT_001', wLeft); wLeft = 0; }
+                    else { p.removeItem('MAT_001', m001); wLeft -= m001; if (wLeft > 0) p.removeItem('wood', wLeft); }
+
+                    // 扣除石材
+                    let sLeft = reqStone;
+                    const m051 = inv['MAT_051'] || 0;
+                    if (m051 >= sLeft) { p.removeItem('MAT_051', sLeft); sLeft = 0; }
+                    else { p.removeItem('MAT_051', m051); sLeft -= m051; if (sLeft > 0) p.removeItem('stone', sLeft); }
+
+                    p.gold = Math.max(0, (p.gold || 0) - reqGold);
+                    b[def.key] = nextLv;
+                    this.saveCampBuildings();
+                    this.applyCampBuildingBonuses();
+                    p.hp = p.maxHp;
+
+                    eventBus.emit('PLAY_SOUND', 'collect');
+                    eventBus.emit('HUD_UPDATE');
+                    eventBus.emit('SAVE_GAME');
+                    eventBus.emit('SHOW_TOAST', `🎉【${def.name}】成功升至 Lv.${nextLv}！能力與據點規模大幅提升！`);
+                    this.openCampUpgradeModal();
+                };
+            }
+            wrap.appendChild(card);
+        });
+
+        textEl.innerHTML = '';
+        textEl.appendChild(wrap);
+        dialogLayer.style.display = 'flex';
     }
 }
