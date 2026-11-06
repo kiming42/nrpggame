@@ -1,17 +1,13 @@
 // src/view/CombatUI.js
-// 🌟 第三步商業級改造 (終極完整版)：
-// 1. 內建「主線 9 大章節故事劇情引導系統 (Story Director)」，首次踏入各島嶼自動彈出世界觀與任務目標劇情
-// 2. 新增「⏳ 限時詠唱倒數計時條 (Quiz Countdown Bar)」，Boss 戰與精英戰具備緊張刺激感
-// 3. 新增「🔥 頭目戰半血狂暴覺醒 (Boss Enrage Phase)」視覺演出與狀態提示
-// 4. 完整保留分類題文字補全、英文串字預設空白格、填充題原句預覽與真實 HTML ID 對齊
+// 🌟 終極完整版 (整合第三步劇情/限時詠唱/狂暴 + 進階改造B：🗼知識試煉之塔 Roguelike 連戰、三選一賜福卡、👑Boss護盾與異常狀態戰術)：
+// 1. 觸碰「知識方尖碑 (tile 51)」自動啟動 5 層 Roguelike 試煉之塔，每層勝利彈出「三選一秘寶賜福卡」
+// 2. Boss 與精英怪實裝「🛡️絕對晶壁護盾」、「🔇沉默禁魔」、「❄️極寒冰封(扣減答題時間)」、「☠️深淵劇毒」
+// 3. 戰鬥藥水策略反制：飲用治療藥水可「淨化所有異常狀態 + 獲得護盾」；投擲火藥彈可「瞬間擊碎 Boss 護盾」
 
 import { eventBus } from '../core/EventBus.js';
 import { Base64Strings, getPixelIconHtml } from '../data/assets.js';
 import { enrichAnyClassifyQuestion } from '../systems/QuestionSystem.js';
 
-// =========================================================================
-// 📖 主線章節故事劇本庫 (解決「沒有主題故事性」痛點)
-// =========================================================================
 export const CHAPTER_STORY_SCRIPTS = {
     starter_island: {
         title: '📜 序章：無知迷霧與翠綠荒島',
@@ -21,7 +17,7 @@ export const CHAPTER_STORY_SCRIPTS = {
     safe_camp: {
         title: '⛺ 安全區：冒險者皇家基地營',
         speaker: '營地總管 巴頓',
-        text: '「歡迎回到【皇家基地營】！這裏不受無知迷霧侵襲。\n\n你可以在東北方飲用『治癒之泉』恢復全部體力，在溫室耕地播種草藥，或者按下 [B 鍵 / 🧱 磚牆鈕] 自由建設你的專屬據點！」'
+        text: '「歡迎回到【皇家基地營】！這裏不受無知迷霧侵襲。\n\n你可以與廣場中央的【公會會長、鐵匠大師、煉金導師】交談，消耗木材與圓石升級據點設施，或觸碰右側的『知識方尖碑』挑戰 5 層試煉之塔！」'
     },
     desert_ruins: {
         title: '⏳ 第二章：時光沙漏遺跡',
@@ -56,9 +52,20 @@ export const CHAPTER_STORY_SCRIPTS = {
     boss_arena: {
         title: '👑 終章：創世獸神聖殿',
         speaker: '混沌獸神 巴哈姆特',
-        text: '「凡人，你竟能破開重重迷霧來到本座面前！\n\n在【創世獸神聖殿】中，你的每一次詠唱都將受到時間的考驗！展現你所學的一切智慧，與本座決一死戰吧！」'
+        text: '「凡人，你竟能破開重重迷霧來到本座面前！\n\n在【創世獸神聖殿】中，本座將施展元素晶壁與禁魔威壓！展現你所學的一切智慧，與本座決一死戰吧！」'
     }
 };
+
+// 🗼 試煉之塔 Roguelike 秘寶賜福卡池
+const TOWER_BUFF_POOL = [
+    { id: 'atk_up',     icon: '⚔️', name: '破軍之刃', desc: '試煉期間，全戰技造成的傷害提升 +35%！' },
+    { id: 'time_ext',   icon: '⏳', name: '時光沙漏', desc: '試煉期間，每題限時詠唱倒數時間延長 +8 秒！' },
+    { id: 'vamp_heal',  icon: '🧛', name: '鮮血渴求', desc: '每次答對發動攻擊時，自動吸取回復 18% 最大生命值！' },
+    { id: 'start_shd',  icon: '🛡️', name: '不朽聖盾', desc: '立即獲得 200 點護盾，且每層開戰自動刷新護盾！' },
+    { id: 'chain_bolt', icon: '⚡', name: '連鎖雷霆', desc: '每次答對時，額外召喚落雷對全體敵人造成 90 點真實傷害！' },
+    { id: 'full_rec',   icon: '🌿', name: '生命湧泉', desc: '立即恢復 70% 最大生命值與 100% 魔力，並驅散所有負面狀態！' },
+    { id: 'rich_loot',  icon: '💎', name: '賢者祝福', desc: '立即獲得 💎真理碎片 x2 與 💰300 金幣！' }
+];
 
 export class CombatUI {
     constructor() {
@@ -87,17 +94,21 @@ export class CombatUI {
         this.isAnimating = false;
         this.speedMultiplier = 1;
 
-        // ⏳ 限時詠唱計時器狀態
         this.quizTimerInterval = null;
         this.quizTimeLeft = 0;
         this.quizMaxTime = 25;
 
-        // 🔥 記錄本場戰鬥已觸發狂暴的 Boss
         this.enragedBossIndices = new Set();
-
-        // 📜 已讀章節故事紀錄
         this.seenChapters = new Set();
         this.loadSeenChapters();
+
+        // 🗼 試煉之塔 Roguelike 狀態
+        this.towerState = {
+            active: false,
+            floor: 1,
+            maxFloor: 5,
+            buffs: new Set()
+        };
 
         this.cleanDuplicateHudDom();
         this.injectArenaDecorAndHero();
@@ -105,6 +116,7 @@ export class CombatUI {
         this.injectQuizTimerBar();
         this.bindEvents();
         this.bindStoryDirector();
+        this.bindRoguelikeTowerEvents();
     }
 
     cleanDuplicateHudDom() {
@@ -119,9 +131,7 @@ export class CombatUI {
     loadSeenChapters() {
         try {
             const raw = localStorage.getItem('rpg_seen_chapters');
-            if (raw) {
-                JSON.parse(raw).forEach(k => this.seenChapters.add(k));
-            }
+            if (raw) JSON.parse(raw).forEach(k => this.seenChapters.add(k));
         } catch (e) {}
     }
 
@@ -131,7 +141,6 @@ export class CombatUI {
         } catch (e) {}
     }
 
-    // 🌟 第三步核心 1：章節故事劇情導演系統 (Story Director)
     bindStoryDirector() {
         const checkAndPlayStory = (mapId) => {
             if (!mapId || this.seenChapters.has(mapId)) return;
@@ -149,23 +158,13 @@ export class CombatUI {
                     titleEl.innerHTML = `${script.title} <span style="font-size:12px; color:#b45309; margin-left:6px;">— ${script.speaker}</span>`;
                     textEl.innerText = script.text;
                     dialogLayer.style.display = 'flex';
-                } else {
-                    eventBus.emit('SHOW_DIALOG', {
-                        title: `${script.title} (${script.speaker})`,
-                        text: script.text
-                    });
                 }
             }, 350);
         };
 
-        // 監聽開始遊戲與切換地圖事件
         const btnStart = document.getElementById('btn-start-game');
         const btnNew = document.getElementById('btn-new-game');
-        if (btnStart) {
-            btnStart.addEventListener('click', () => {
-                setTimeout(() => checkAndPlayStory('starter_island'), 500);
-            });
-        }
+        if (btnStart) btnStart.addEventListener('click', () => setTimeout(() => checkAndPlayStory('starter_island'), 500));
         if (btnNew) {
             btnNew.addEventListener('click', () => {
                 this.seenChapters.clear();
@@ -194,12 +193,110 @@ export class CombatUI {
                 floating_from_boss: 'floating',
                 bossMap: 'boss_arena'
             };
-            const mId = keyToMapId[targetKey] || targetKey;
-            checkAndPlayStory(mId);
+            checkAndPlayStory(keyToMapId[targetKey] || targetKey);
         });
     }
 
-    // 🌟 第三步核心 2：在答題視窗頂部注入「⏳ 限時詠唱倒數計時條」
+    // 🌟 進階改造 B-1：綁定「🗿 知識方尖碑」Roguelike 5 層試煉之塔事件
+    bindRoguelikeTowerEvents() {
+        eventBus.on('ENCOUNTER_ENEMY', (type) => {
+            if (type === 'obelisk_trial' && !this.towerState.active) {
+                this.towerState.active = true;
+                this.towerState.floor = 1;
+                this.towerState.buffs.clear();
+                eventBus.emit('SHOW_TOAST', '🗼 進入【知識試煉之塔】第 1 / 5 層！擊敗守衛可挑選秘寶賜福！');
+            }
+        });
+    }
+
+    // 彈出「三選一秘寶賜福卡」羊皮紙選單
+    showTowerBuffSelectionModal() {
+        const dialogLayer = document.getElementById('pixel-dialog-layer');
+        const titleEl = document.getElementById('pixel-dialog-title');
+        const textEl = document.getElementById('pixel-dialog-text');
+        const okBtn = document.getElementById('btn-dialog-ok');
+        if (!dialogLayer || !titleEl || !textEl) return;
+
+        if (okBtn) okBtn.style.display = 'none';
+
+        const curFloor = this.towerState.floor;
+        titleEl.innerHTML = `🗼 試煉之塔 • 突破第 ${curFloor} / ${this.towerState.maxFloor} 層！ <span style="font-size:12px; color:#15803d; margin-left:6px;">請選擇 1 項秘寶賜福</span>`;
+
+        // 隨機抽出 3 張不重複賜福卡
+        const shuffled = [...TOWER_BUFF_POOL].sort(() => Math.random() - 0.5).slice(0, 3);
+
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex; flex-direction:column; gap:8px; margin-top:6px;';
+
+        shuffled.forEach(card => {
+            const btn = document.createElement('button');
+            btn.className = 'px-btn';
+            btn.style.cssText = 'width:100%; background:#f3dbb3; color:#2b1d0e; border:2.5px solid #4a2e16; padding:10px 12px; display:flex; align-items:center; justify-content:flex-start; gap:10px; text-align:left; border-radius:6px;';
+            btn.innerHTML = `
+                <span style="font-size:26px; background:#3b2614; padding:6px; border-radius:6px;">${card.icon}</span>
+                <div style="flex:1;">
+                    <div style="font-size:14px; font-weight:900; color:#b45309;">【${card.name}】</div>
+                    <div style="font-size:12px; color:#2b1d0e; margin-top:2px;">${card.desc}</div>
+                </div>
+                <span style="background:#15803d; color:#fff; padding:4px 8px; border-radius:4px; font-size:11px;">選擇 ▶</span>
+            `;
+            btn.onclick = () => {
+                if (okBtn) okBtn.style.display = 'inline-block';
+                dialogLayer.style.display = 'none';
+                this.applyTowerBuffAndNextFloor(card);
+            };
+            wrap.appendChild(btn);
+        });
+
+        const leaveBtn = document.createElement('button');
+        leaveBtn.className = 'px-btn danger';
+        leaveBtn.style.cssText = 'width:100%; margin-top:4px; padding:7px;';
+        leaveBtn.innerText = '🏃 見好就收，帶著目前戰利品離開試煉之塔';
+        leaveBtn.onclick = () => {
+            if (okBtn) okBtn.style.display = 'inline-block';
+            dialogLayer.style.display = 'none';
+            this.towerState.active = false;
+            this.towerState.buffs.clear();
+            eventBus.emit('SHOW_TOAST', `🗼 已安全撤離試煉之塔（止步於第 ${curFloor} 層）！`);
+        };
+        wrap.appendChild(leaveBtn);
+
+        textEl.innerHTML = '';
+        textEl.appendChild(wrap);
+        dialogLayer.style.display = 'flex';
+    }
+
+    applyTowerBuffAndNextFloor(card) {
+        const p = this.currentState?.player;
+        this.towerState.buffs.add(card.id);
+
+        if (p) {
+            if (card.id === 'start_shd') {
+                p.shieldHp = (p.shieldHp || 0) + 200;
+            } else if (card.id === 'full_rec') {
+                p.hp = Math.min(p.maxHp, p.hp + Math.round(p.maxHp * 0.7));
+                p.mp = p.maxMp || 60;
+                p.statuses = [];
+            } else if (card.id === 'rich_loot') {
+                p.addItem('truth_fragment', 2);
+                p.gold = (p.gold || 0) + 300;
+            }
+            eventBus.emit('HUD_UPDATE');
+        }
+
+        this.towerState.floor++;
+        eventBus.emit('PLAY_SOUND', 'collect');
+        eventBus.emit('SHOW_TOAST', `✨ 獲得賜福【${card.name}】！邁向試煉之塔第 ${this.towerState.floor} / ${this.towerState.maxFloor} 層！`);
+
+        setTimeout(() => {
+            if (this.towerState.floor >= this.towerState.maxFloor) {
+                eventBus.emit('BOSS_ENCOUNTER');
+            } else {
+                eventBus.emit('ENCOUNTER_ENEMY', 'obelisk_floor_next');
+            }
+        }, 380);
+    }
+
     injectQuizTimerBar() {
         if (!this.quizModal || document.getElementById('quiz-timer-wrap')) return;
         const header = this.quizModal.querySelector('.quiz-parchment-header');
@@ -217,11 +314,23 @@ export class CombatUI {
 
     startQuizTimer() {
         this.clearQuizTimer();
-        // 檢查場上是否有 Boss 或狂暴魔物：Boss 戰限時 20 秒，一般戰鬥 30 秒
+        const p = this.currentState?.player;
         const hasBoss = Array.isArray(this.currentState?.enemies) && this.currentState.enemies.some(e => e.hp > 0 && (e.isBoss || e.maxHp >= 350));
-        this.quizMaxTime = hasBoss ? 20 : 30;
+        let baseTime = hasBoss ? 20 : 30;
+
+        // 試煉之塔「時光沙漏」賜福 +8 秒
+        if (this.towerState.active && this.towerState.buffs.has('time_ext')) {
+            baseTime += 8;
+        }
+        // 若玩家中了 Boss 的「❄️ 極寒冰封」異常狀態，答題時間 -5 秒！
+        const isChilled = Array.isArray(p?.statuses) && p.statuses.some(s => s.statusId === 'DEBUFF_CHILL');
+        if (isChilled) {
+            baseTime = Math.max(10, baseTime - 5);
+        }
+
+        this.quizMaxTime = baseTime;
         this.quizTimeLeft = this.quizMaxTime;
-        this.updateQuizTimerUI();
+        this.updateQuizTimerUI(isChilled);
 
         this.quizTimerInterval = setInterval(() => {
             if (this.isAnimating || !this.quizModal || this.quizModal.style.display === 'none') {
@@ -229,7 +338,7 @@ export class CombatUI {
                 return;
             }
             this.quizTimeLeft = Math.max(0, this.quizTimeLeft - 0.25);
-            this.updateQuizTimerUI();
+            this.updateQuizTimerUI(isChilled);
 
             if (this.quizTimeLeft <= 0) {
                 this.clearQuizTimer();
@@ -239,7 +348,7 @@ export class CombatUI {
         }, 250);
     }
 
-    updateQuizTimerUI() {
+    updateQuizTimerUI(isChilled = false) {
         const fillEl = document.getElementById('quiz-timer-fill');
         const labelEl = document.getElementById('quiz-timer-label');
         if (!fillEl || !labelEl) return;
@@ -247,12 +356,12 @@ export class CombatUI {
         const pct = Math.max(0, Math.min(100, (this.quizTimeLeft / this.quizMaxTime) * 100));
         fillEl.style.width = `${pct}%`;
 
-        if (pct > 50) fillEl.style.backgroundColor = '#16a34a';
+        if (pct > 50) fillEl.style.backgroundColor = isChilled ? '#0284c7' : '#16a34a';
         else if (pct > 25) fillEl.style.backgroundColor = '#d97706';
         else fillEl.style.backgroundColor = '#dc2626';
 
         const sec = Math.ceil(this.quizTimeLeft);
-        labelEl.innerText = `⏳ 限時詠唱倒數：${sec} 秒 ${sec <= 5 ? '⚠️ 快作答！' : ''}`;
+        labelEl.innerText = `⏳ 限時詠唱倒數：${sec} 秒 ${isChilled ? '(❄️冰封減速中)' : ''} ${sec <= 5 ? '⚠️ 快作答！' : ''}`;
     }
 
     clearQuizTimer() {
@@ -372,10 +481,51 @@ export class CombatUI {
                     return;
                 }
                 const skillId = btn.dataset.skill;
+                const p = this.currentState?.player;
+                const isSilenced = Array.isArray(p?.statuses) && p.statuses.some(s => s.statusId === 'DEBUFF_SILENCE_SEAL');
+                if (isSilenced && skillId !== 'slash') {
+                    eventBus.emit('SHOW_TOAST', '🔇 你正處於【沉默禁魔】狀態！請使用 1 號基礎技，或飲用左下角【治療藥水】淨化！');
+                    eventBus.emit('PLAY_SOUND', 'bump');
+                    return;
+                }
                 eventBus.emit('SELECT_COMBAT_SKILL', skillId);
                 this.openQuizModal();
             });
         });
+
+        // 🌟 進階改造 B-2：強化戰鬥藥水與火藥彈的「淨化異常狀態 + 擊碎護盾」戰術效果
+        const btnHeal = document.getElementById('btn-item-heal');
+        if (btnHeal) {
+            btnHeal.addEventListener('click', () => {
+                const p = this.currentState?.player;
+                if (!p) return;
+                const hadDebuff = Array.isArray(p.statuses) && p.statuses.length > 0;
+                p.statuses = [];
+                p.shieldHp = (p.shieldHp || 0) + 80;
+                if (hadDebuff) {
+                    eventBus.emit('SHOW_TOAST', '✨ 藥水聖光淨化了所有負面異常狀態，並展開 🛡️80 護盾！');
+                }
+                setTimeout(() => this.updateStatus(this.currentState), 60);
+            });
+        }
+
+        const btnBomb = document.getElementById('btn-item-3');
+        if (btnBomb) {
+            btnBomb.addEventListener('click', () => {
+                if (!this.currentState?.enemies) return;
+                let brokeShield = false;
+                this.currentState.enemies.forEach(e => {
+                    if ((e.shieldHp || 0) > 0) {
+                        e.shieldHp = 0;
+                        brokeShield = true;
+                    }
+                });
+                if (brokeShield) {
+                    eventBus.emit('SHOW_TOAST', '💥 爆裂火藥彈瞬間炸碎了頭目的【元素晶壁護盾】！');
+                }
+                setTimeout(() => this.updateStatus(this.currentState), 60);
+            });
+        }
 
         const closeBtn = document.getElementById('btn-quiz-close');
         if (closeBtn) {
@@ -393,12 +543,8 @@ export class CombatUI {
                 e.preventDefault();
                 if (this.currentQuestion) {
                     const q = this.currentQuestion;
-                    if (q.qType === '英文串字') {
-                        this.speakText(q.answer, 'eng');
-                    } else {
-                        const txt = q.question || q.prompt || '';
-                        this.speakText(txt, q.subject);
-                    }
+                    if (q.qType === '英文串字') this.speakText(q.answer, 'eng');
+                    else this.speakText(q.question || q.prompt || '', q.subject);
                 }
             };
         }
@@ -409,6 +555,11 @@ export class CombatUI {
                 e.preventDefault();
                 if (this.isAnimating) return;
                 this.clearQuizTimer();
+                if (this.towerState.active) {
+                    this.towerState.active = false;
+                    this.towerState.buffs.clear();
+                    eventBus.emit('SHOW_TOAST', '🗼 已撤離知識試煉之塔！');
+                }
                 eventBus.emit('COMBAT_ESCAPE');
             };
         }
@@ -445,6 +596,7 @@ export class CombatUI {
         const bCamp = document.getElementById('btn-arena-camp');
         if (bCamp) bCamp.onclick = () => {
             this.clearQuizTimer();
+            this.towerState.active = false;
             eventBus.emit('COMBAT_ESCAPE');
             eventBus.emit('CHANGE_MAP', 'campMap');
         };
@@ -476,6 +628,24 @@ export class CombatUI {
         this.clearQuizTimer();
         if (state.turn === 1) {
             this.enragedBossIndices.clear();
+            // 若處於試煉之塔，依層數強化敵人並套用開場聖盾賜福
+            if (this.towerState.active) {
+                const fl = this.towerState.floor;
+                state.chapterName = `🗼 知識試煉之塔（第 ${fl} / ${this.towerState.maxFloor} 層）`;
+                if (this.towerState.buffs.has('start_shd') && state.player) {
+                    state.player.shieldHp = Math.max(state.player.shieldHp || 0, 180);
+                }
+                (state.enemies || []).forEach(e => {
+                    if (!e._towerScaled) {
+                        e._towerScaled = true;
+                        const mult = 1 + (fl - 1) * 0.25;
+                        e.maxHp = Math.round(e.maxHp * mult);
+                        e.hp = e.maxHp;
+                        e.atk = Math.round((e.atk || 25) * mult);
+                        if (fl >= 3) e.shieldHp = 60 * (fl - 2);
+                    }
+                });
+            }
         }
 
         if (this.hud) this.hud.style.display = 'none';
@@ -519,7 +689,7 @@ export class CombatUI {
         return Base64Strings[enemy.sprite] || Base64Strings.witch;
     }
 
-    // 🌟 第三步核心 3：頭目戰與精英怪「半血狂暴二階段 (Enrage Phase)」檢測與視覺特效
+    // 🌟 進階改造 B-3：頭目戰「元素護盾 + 半血狂暴 + 異常狀態」視覺與機制
     renderEnemies(state) {
         if (!this.chessboard) return;
         this.chessboard.innerHTML = '';
@@ -529,19 +699,22 @@ export class CombatUI {
             const isDead = enemy.hp <= 0;
             const hpPercent = Math.max(0, (enemy.hp / enemy.maxHp) * 100);
 
-            // 檢查頭目/高血量精英是否跌破 50% HP 進入狂暴狀態
             const isBossOrElite = enemy.isBoss || enemy.maxHp >= 300;
             const isEnraged = !isDead && isBossOrElite && hpPercent <= 50;
 
             if (isEnraged && !this.enragedBossIndices.has(idx)) {
                 this.enragedBossIndices.add(idx);
                 enemy.atk = Math.round((enemy.atk || 35) * 1.35);
-                eventBus.emit('SHOW_TOAST', `🔥 警告！【${enemy.name}】生命值低於 50%，進入【狂暴二階段】（攻擊力大幅提升）！`);
+                enemy.shieldHp = (enemy.shieldHp || 0) + 150;
+                eventBus.emit('SHOW_TOAST', `🔥 警告！【${enemy.name}】進入狂暴二階段，展開 🛡️150 元素晶壁護盾並提升攻擊力！`);
             }
 
             const statusHtml = this.renderStatusBadgesHtml(enemy.statuses || []);
             const enrageBadge = isEnraged
-                ? `<span style="background:#dc2626; color:#fef08a; border:1px solid #fff; padding:0 4px; font-size:10px; font-weight:900; animation:pulse 0.8s infinite;">🔥狂暴</span>`
+                ? `<span style="background:#dc2626; color:#fef08a; border:1px solid #fff; padding:0 4px; font-size:10px; font-weight:900;">🔥狂暴</span>`
+                : '';
+            const shieldBadge = (enemy.shieldHp || 0) > 0
+                ? `<span style="background:#0284c7; color:#fff; border:1px solid #7dd3fc; padding:0 4px; font-size:10px; font-weight:900;">🛡️${enemy.shieldHp}</span>`
                 : '';
 
             const card = document.createElement('div');
@@ -549,13 +722,13 @@ export class CombatUI {
             card.className = `arena-enemy-card ${isTargeted ? 'targeted' : ''} ${isDead ? 'dead' : ''}`;
             card.innerHTML = `
                 <div id="enemy-float-${idx}" class="dmg-container"></div>
-                <div style="display:flex; gap:2px; min-height:16px; justify-content:center;">${enrageBadge}${statusHtml}</div>
+                <div style="display:flex; gap:2px; min-height:16px; justify-content:center;">${enrageBadge}${shieldBadge}${statusHtml}</div>
                 <div class="arena-lock-label">${isTargeted ? '▼ 目標' : '&nbsp;'}</div>
                 <div class="arena-unit-name" style="${isEnraged ? 'color:#fca5a5;' : ''}">${enemy.name}</div>
-                <img class="arena-enemy-sprite" src="${this.getEnemySprite(enemy)}" style="${isEnraged ? 'filter:drop-shadow(0 0 8px #ef4444) sepia(0.4) saturate(3);' : ''}" alt="" />
+                <img class="arena-enemy-sprite" src="${this.getEnemySprite(enemy)}" style="${isEnraged ? 'filter:drop-shadow(0 0 8px #ef4444) sepia(0.4) saturate(3);' : ((enemy.shieldHp || 0) > 0 ? 'filter:drop-shadow(0 0 6px #38bdf8);' : '')}" alt="" />
                 <div class="arena-hp-bar">
                     <div class="arena-hp-fill" style="width:${hpPercent}%; ${isEnraged ? 'background:#dc2626;' : ''}"></div>
-                    <span class="arena-hp-text">${enemy.hp}</span>
+                    <span class="arena-hp-text">${enemy.hp}${(enemy.shieldHp || 0) > 0 ? ` (+🛡️${enemy.shieldHp})` : ''}</span>
                 </div>
                 <div class="arena-atk-label">⚔️${enemy.atk || 26} <span style="color:#ffeb3b; font-size:9px;">${enemy.weaknessText || ''}</span></div>
             `;
@@ -574,7 +747,10 @@ export class CombatUI {
     updateStatus(state) {
         this.currentState = state;
         if (this.turnNum) this.turnNum.innerText = state.turn;
-        if (this.chapterTitle && state.chapterName) this.chapterTitle.innerText = `⏳ ${state.chapterName}`;
+        if (this.chapterTitle && state.chapterName) {
+            const towerTag = this.towerState.active ? ` ｜ 🎁賜福:${this.towerState.buffs.size}` : '';
+            this.chapterTitle.innerText = `⏳ ${state.chapterName}${towerTag}`;
+        }
 
         const p = state.player;
         const nameEl = document.getElementById('arena-player-name');
@@ -723,17 +899,14 @@ export class CombatUI {
             this.renderInteractiveClassification(questionData, resolvedAns);
             return;
         }
-
         if (qType === '看圖填充題' || questionData.interactiveType === 'fill_blanks') {
             this.renderInteractiveMultiBlank(questionData, resolvedAns);
             return;
         }
-
         if (qType === '英文串字' && /^[A-Za-z\s-]{3,28}$/.test(resolvedAns.trim())) {
             this.renderInteractiveSpelling(questionData, resolvedAns.trim());
             return;
         }
-
         if (['填充題', '中文填充題', '英文填充題', '填空題'].includes(qType)) {
             this.renderInteractiveSingleBlank(questionData, resolvedAns);
             return;
@@ -784,9 +957,7 @@ export class CombatUI {
                 replaced = rawSentence.replace(/（[＿_\s]+）|\([＿_\s]+\)|[＿_]{2,}/g, () => {
                     const fillTxt = parts[blankIdx] || selectedOption;
                     blankIdx++;
-                    if (fillTxt) {
-                        return `<span class="blank-slot filled" style="margin:0 4px;">${fillTxt}</span>`;
-                    }
+                    if (fillTxt) return `<span class="blank-slot filled" style="margin:0 4px;">${fillTxt}</span>`;
                     return `<span class="blank-slot" style="margin:0 4px;">❓ 點擊下方詞卡填入</span>`;
                 });
             } else {
@@ -855,7 +1026,6 @@ export class CombatUI {
 
     renderInteractiveClassification(questionData, resolvedAns) {
         enrichAnyClassifyQuestion(questionData);
-
         const buckets = [];
         let allItems = [];
 
@@ -868,7 +1038,6 @@ export class CombatUI {
         } else {
             const fullPrompt = String(questionData.question || questionData.prompt || '').replace(/\n/g, '<br>');
             this.qText.innerHTML = `<span style="background:#7c3aed; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; margin-right:6px; vertical-align:middle;">分類題</span><span>${fullPrompt}</span>`;
-
             const shuffledOpts = [...(questionData.options || [])].sort(() => Math.random() - 0.5);
             shuffledOpts.forEach(opt => {
                 const btn = document.createElement('button');
@@ -1028,9 +1197,7 @@ export class CombatUI {
                 btn.innerText = word;
                 btn.onclick = () => {
                     let targetIdx = activeSlot;
-                    if (filledSlots[targetIdx] !== null) {
-                        targetIdx = filledSlots.findIndex(v => v === null);
-                    }
+                    if (filledSlots[targetIdx] !== null) targetIdx = filledSlots.findIndex(v => v === null);
                     if (targetIdx !== -1) {
                         filledSlots[targetIdx] = word;
                         const nextEmpty = filledSlots.findIndex(v => v === null);
@@ -1094,14 +1261,12 @@ export class CombatUI {
             let letterSlotPtr = 0;
             for (let i = 0; i < allChars.length; i++) {
                 const targetCh = allChars[i];
-
                 if (targetCh === ' ') {
                     const spaceDiv = document.createElement('div');
                     spaceDiv.style.cssText = 'width:18px; height:38px; display:inline-block;';
                     slotsRow.appendChild(spaceDiv);
                     continue;
                 }
-
                 if (targetCh === '-') {
                     const dashDiv = document.createElement('div');
                     dashDiv.style.cssText = 'width:18px; height:38px; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:900; color:#5c3a21;';
@@ -1124,7 +1289,6 @@ export class CombatUI {
                 `;
                 box.innerText = letterObj ? letterObj.ch : '_';
                 if (letterObj) {
-                    box.title = '點擊退回此字母';
                     box.onclick = () => {
                         pickedIds.splice(currentPtr, 1);
                         renderSpellUI();
@@ -1199,6 +1363,47 @@ export class CombatUI {
         const resolvedAns = this.resolveTargetAnswerString(this.currentQuestion);
         const isCorrect = (selectedOption === this.currentQuestion.answer) || (String(selectedOption).replace(/｜/g, '|') === resolvedAns);
 
+        // 🌟 套用試煉之塔賜福卡效果 (破軍之刃 / 鮮血渴求 / 連鎖雷霆)
+        const p = this.currentState?.player;
+        const enemies = this.currentState?.enemies || [];
+        if (isCorrect && this.towerState.active && p) {
+            if (this.towerState.buffs.has('vamp_heal')) {
+                const vamp = Math.round(p.maxHp * 0.18);
+                p.hp = Math.min(p.maxHp, p.hp + vamp);
+            }
+            if (this.towerState.buffs.has('chain_bolt')) {
+                enemies.forEach((e, idx) => {
+                    if (e.hp > 0) {
+                        e.hp = Math.max(0, e.hp - 90);
+                        this.spawnFloatingText(`enemy-float-${idx}`, `-90 ⚡雷霆`, 'crit');
+                    }
+                });
+            }
+            if (this.towerState.buffs.has('atk_up')) {
+                const target = enemies[this.currentState.selectedTargetIndex];
+                if (target && target.hp > 0) {
+                    const extra = Math.round((p.calcAtk ? p.calcAtk() : 80) * 0.35);
+                    target.hp = Math.max(0, target.hp - extra);
+                }
+            }
+        }
+
+        // 處理敵方元素護盾吸收傷害邏輯
+        if (isCorrect) {
+            const target = enemies[this.currentState?.selectedTargetIndex || 0];
+            if (target && (target.shieldHp || 0) > 0) {
+                const isHeavySkill = this.currentState?.selectedSkill && this.currentState.selectedSkill !== 'slash';
+                if (isHeavySkill) {
+                    target.shieldHp = 0;
+                    eventBus.emit('SHOW_TOAST', `💥 強力的進階戰技直接擊碎了【${target.name}】的元素護盾！`);
+                } else {
+                    target.shieldHp = Math.max(0, target.shieldHp - 60);
+                    target.hp = Math.min(target.maxHp, target.hp + 35);
+                    eventBus.emit('SHOW_TOAST', `🛡️【${target.name}】的護盾吸收了部分普攻傷害！（使用進階戰技或火藥彈可破盾）`);
+                }
+            }
+        }
+
         eventBus.emit('COMBAT_TURN_RESOLVE', {
             isCorrect,
             correctAnswer: resolvedAns || this.currentQuestion.answer,
@@ -1234,6 +1439,7 @@ export class CombatUI {
         }, step2);
     }
 
+    // 🌟 進階改造 B-4：敵方反擊時，Boss / 精英怪有機率施放「沉默禁魔、極寒冰封、深淵劇毒」異常狀態！
     playEnemiesCounter(counterData, callback) {
         const step1 = Math.floor(150 / this.speedMultiplier);
         const step2 = Math.floor(740 / this.speedMultiplier);
@@ -1243,6 +1449,28 @@ export class CombatUI {
             const card = document.getElementById(`enemy-card-${idx}`);
             if (card) card.classList.add('anim-lunge-left');
         });
+
+        // 檢查是否有 Boss 或試煉之塔高層魔物施放異常狀態
+        const p = this.currentState?.player;
+        const enemies = this.currentState?.enemies || [];
+        const activeBoss = enemies.find(e => e.hp > 0 && (e.isBoss || e.maxHp >= 260 || this.towerState.active));
+
+        if (activeBoss && p) {
+            if (!Array.isArray(p.statuses)) p.statuses = [];
+            const roll = Math.random();
+            if (roll < 0.35 && !p.statuses.some(s => s.statusId === 'DEBUFF_SILENCE_SEAL')) {
+                p.statuses.push({ statusId: 'DEBUFF_SILENCE_SEAL', name: '沉默禁魔', icon: '🔇', category: 'cc', turnsLeft: 2, stacks: 1 });
+                eventBus.emit('SHOW_TOAST', `🔇【${activeBoss.name}】施放了「沉默禁魔」！進階技能被封印（飲用治療藥水可淨化）！`);
+            } else if (roll < 0.70 && !p.statuses.some(s => s.statusId === 'DEBUFF_CHILL')) {
+                p.statuses.push({ statusId: 'DEBUFF_CHILL', name: '極寒冰封', icon: '❄️', category: 'debuff', turnsLeft: 2, stacks: 1 });
+                eventBus.emit('SHOW_TOAST', `❄️【${activeBoss.name}】施放了「極寒冰封」！下一題詠唱時間縮短 5 秒！`);
+            } else if (!p.statuses.some(s => s.statusId === 'DOT_POISON')) {
+                p.statuses.push({ statusId: 'DOT_POISON', name: '深淵劇毒', icon: '☠️', category: 'dot', turnsLeft: 3, stacks: 1 });
+                const poisonDmg = Math.max(10, Math.round(p.maxHp * 0.06));
+                p.hp = Math.max(1, p.hp - poisonDmg);
+                eventBus.emit('SHOW_TOAST', `☠️【${activeBoss.name}】附加了「深淵劇毒」（-${poisonDmg} HP，飲用藥水可解毒）！`);
+            }
+        }
 
         setTimeout(() => {
             if (this.combatFx) this.combatFx.innerText = 'BAM!';
@@ -1277,6 +1505,13 @@ export class CombatUI {
         if (this.layer) this.layer.style.display = 'none';
         if (this.quizModal) this.quizModal.style.display = 'none';
         if (this.hud) this.hud.style.display = 'flex';
+
+        // 🌟 檢查是否剛打贏「知識試煉之塔」的某一層（全場敵人 HP <= 0 且玩家存活）
+        const allEnemiesDead = Array.isArray(this.currentState?.enemies) &&
+                               this.currentState.enemies.length > 0 &&
+                               this.currentState.enemies.every(e => e.hp <= 0);
+        const playerAlive = (this.currentState?.player?.hp || 0) > 0;
+
         this.currentQuestion = null;
         this.optionButtons = [];
         this.isAnimating = false;
@@ -1288,6 +1523,39 @@ export class CombatUI {
         }
         const canvas = document.getElementById('gameCanvas');
         if (canvas) canvas.focus();
+
+        if (this.towerState.active) {
+            if (allEnemiesDead && playerAlive) {
+                if (this.towerState.floor < this.towerState.maxFloor) {
+                    setTimeout(() => this.showTowerBuffSelectionModal(), 260);
+                } else {
+                    // 成功登頂第 5 層！頒發終極大獎！
+                    const p = this.currentState?.player;
+                    this.towerState.active = false;
+                    this.towerState.buffs.clear();
+                    if (p) {
+                        p.addItem('truth_fragment', 5);
+                        p.addItem('CON_ELIXIR_T4', 1);
+                        p.gold = (p.gold || 0) + 1200;
+                        eventBus.emit('HUD_UPDATE');
+                        eventBus.emit('SAVE_GAME');
+                    }
+                    setTimeout(() => {
+                        const dialogLayer = document.getElementById('pixel-dialog-layer');
+                        const titleEl = document.getElementById('pixel-dialog-title');
+                        const textEl = document.getElementById('pixel-dialog-text');
+                        if (dialogLayer && titleEl && textEl) {
+                            titleEl.innerHTML = '🏆 恭喜制霸【知識試煉之塔】全 5 層！';
+                            textEl.innerText = '你成功突破了五層試煉與守門領主的考驗！\n\n🎁 登頂大獎已發放至背包：\n• 💎 真理碎片 x5\n• 💰 1,200 金幣\n• 🧪 九轉還魂丹 x1';
+                            dialogLayer.style.display = 'flex';
+                        }
+                    }, 300);
+                }
+            } else if (!playerAlive) {
+                this.towerState.active = false;
+                this.towerState.buffs.clear();
+            }
+        }
     }
 
     updateItemCounts(inventory) {

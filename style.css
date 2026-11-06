@@ -45,6 +45,7 @@ canvas {
     width: 100% !important;
     height: 100% !important;
     object-fit: fill !important;
+    display: block !important;
 }
 
 .px-icon {

@@ -1,8 +1,9 @@
 // src/systems/MovementSystem.js
-// 🌟 第一步商業級改造 (基於最新穩定觸控版)：
+// 🌟 終極完整穩定版：
 // 1. 保留 cloneNode + pointerdown + 100ms 防連跳鎖，確保手機輕按 1 下精準只行 1 格
-// 2. 保留 TILE_SIZE = 48 與 cameraX/Y 點擊座標換算
-// 3. 實裝「多段敲擊耐久度」、「體力消耗」、「背包負重上限 (120/250)」與「稀有礦脈守衛伏擊」
+// 2. 保留 TILE_SIZE = 48 與 cameraX/Y 鏡頭點擊座標換算
+// 3. 實裝「多段敲擊耐久度」、「體力消耗」、「據點倉庫擴容上限」與「稀有礦脈守衛伏擊」
+// 4. 支援安全基地營 3 大實體 NPC (row: 6, col: 4/7/10) 與「🗿 知識方尖碑 (tile 51)」碰撞/點擊直接觸發
 
 import { eventBus } from '../core/EventBus.js';
 import { Items } from '../data/items.js';
@@ -31,7 +32,25 @@ export class MovementSystem {
         setTimeout(() => this.updateContextActionUI(), 200);
     }
 
-     getInventoryLoadInfo() {
+    // 判斷是否為安全基地營
+    isSafeCamp(mapObj) {
+        if (!mapObj) return false;
+        return mapObj.id === 'safe_camp' || mapObj.id === 'campMap' || String(mapObj.chapterName || '').includes('基地');
+    }
+
+    // 檢查目標座標是否為基地營駐守 NPC
+    getCampNpcAt(mapObj, row, col) {
+        if (!this.isSafeCamp(mapObj)) return null;
+        const campNpcMap = {
+            '6_4':  'guild_master',
+            '6_7':  'blacksmith',
+            '6_10': 'alchemist'
+        };
+        return campNpcMap[`${row}_${col}`] || null;
+    }
+
+    // 計算背包當前總物品數與負重上限（支援據點「探險家大倉庫」升級擴容）
+    getInventoryLoadInfo() {
         const p = this.gameState.player;
         let totalCount = 0;
         for (const [k, cnt] of Object.entries(p.inventory || {})) {
@@ -44,7 +63,7 @@ export class MovementSystem {
         return { totalCount, maxCap, isFull: totalCount >= maxCap };
     }
 
-    // 手機方向鍵與畫面點擊移動 (已徹底解決按 1 下跳 3 格問題)
+    // 手機方向鍵與畫面點擊移動 (徹底解決按 1 下跳 3 格問題)
     bindMobileTouchAndCanvasTap() {
         const stopHoldMove = () => {
             if (this.holdStartTimeout) {
@@ -126,6 +145,13 @@ export class MovementSystem {
                 const tapCol = Math.floor((((e.clientX - rect.left) / rect.width) * viewW + camX) / tileSize);
                 const tapRow = Math.floor((((e.clientY - rect.top) / rect.height) * viewH + camY) / tileSize);
 
+                // 若在安全基地營直接點擊 NPC，立即打開該 NPC 的對話視窗
+                const tappedNpc = this.getCampNpcAt(currentMap, tapRow, tapCol);
+                if (tappedNpc && Math.abs(tapCol - player.col) + Math.abs(tapRow - player.row) <= 2) {
+                    eventBus.emit('OPEN_CAMP_NPC', tappedNpc);
+                    return;
+                }
+
                 const dCol = tapCol - player.col;
                 const dRow = tapRow - player.row;
 
@@ -137,6 +163,13 @@ export class MovementSystem {
                 if (Math.abs(dCol) + Math.abs(dRow) === 1) {
                     const dir = dCol === 1 ? 'right' : (dCol === -1 ? 'left' : (dRow === 1 ? 'down' : 'up'));
                     player.direction = dir;
+
+                    if (tappedNpc) {
+                        this.updateContextActionUI();
+                        eventBus.emit('OPEN_CAMP_NPC', tappedNpc);
+                        return;
+                    }
+
                     const targetTile = currentMap.tiles[tapRow]?.[tapCol];
                     const walkableTiles = [0, 2, 7, 11, 12, 13, 14, 15, 18, 20, 30, 31, 32, 33, 34, 40, 42, 45];
                     if (!walkableTiles.includes(targetTile) || [14, 15].includes(targetTile)) {
@@ -277,13 +310,16 @@ export class MovementSystem {
             targetTile = currentMap.tiles[tRow][tCol];
         }
 
-        if (targetTile === 1 || targetTile === 17) {
+        const facingNpc = this.getCampNpcAt(currentMap, tRow, tCol);
+        if (facingNpc) {
+            actIcoEl.innerHTML = getPixelIconHtml('hand_icon', 34);
+        } else if (targetTile === 1 || targetTile === 17) {
             actIcoEl.innerHTML = getPixelIconHtml('axe_icon', 34);
         } else if ([3, 4, 8, 19, 46, 47, 48, 49].includes(targetTile)) {
             actIcoEl.innerHTML = getPixelIconHtml('pickaxe', 34);
         } else if ([7, 16, 40].includes(targetTile)) {
             actIcoEl.innerHTML = getPixelIconHtml('rod_icon', 34);
-        } else if ([15, 41, 9, 43, 14, 50].includes(targetTile)) {
+        } else if ([15, 41, 9, 43, 14, 50, 6].includes(targetTile)) {
             actIcoEl.innerHTML = getPixelIconHtml('hand_icon', 34);
         } else if ([5, 51].includes(targetTile)) {
             actIcoEl.innerHTML = getPixelIconHtml('sword', 34);
@@ -331,7 +367,7 @@ export class MovementSystem {
         return yields[0];
     }
 
-    // 🌟 第一步核心：多段敲擊採集 + 體力消耗 + 背包負重上限 + 守衛伏擊
+    // 多段敲擊採集 + 體力消耗 + 背包負重上限 + 守衛伏擊
     executeNodeGathering(nodeConfig, row, col, originalTileId) {
         const { player, currentMap } = this.gameState;
         const mapTier = currentMap.tier || 1;
@@ -340,7 +376,7 @@ export class MovementSystem {
         const loadInfo = this.getInventoryLoadInfo();
         if (loadInfo.isFull) {
             eventBus.emit('PLAY_SOUND', 'bump');
-            eventBus.emit('SHOW_TOAST', `🎒 背包已滿載 (${loadInfo.totalCount}/${loadInfo.maxCap})！請先打開【⚒️ 製作】加工素材或前往商會出售。`);
+            eventBus.emit('SHOW_TOAST', `🎒 背包已滿載 (${loadInfo.totalCount}/${loadInfo.maxCap})！請打開【⚒️ 製作】或回營地找鐵匠升級倉庫。`);
             return;
         }
 
@@ -468,7 +504,7 @@ export class MovementSystem {
     }
 
     toggleBuildMode() {
-        if (this.gameState.currentMap.id !== 'safe_camp') {
+        if (!this.isSafeCamp(this.gameState.currentMap)) {
             eventBus.emit('SHOW_TOAST', '建造模式只能在【安全營地】中使用！');
             return;
         }
@@ -533,7 +569,29 @@ export class MovementSystem {
         else if (dir === 'right') targetCol += 1;
 
         if (targetCol >= 0 && targetCol < currentMap.cols && targetRow >= 0 && targetRow < currentMap.rows) {
+            // 1. 在安全基地營走向駐守 NPC (row: 6, col: 4/7/10) 時，直接觸發視覺小說對話！
+            const campNpcKey = this.getCampNpcAt(currentMap, targetRow, targetCol);
+            if (campNpcKey) {
+                eventBus.emit('OPEN_CAMP_NPC', campNpcKey);
+                this.updateContextActionUI();
+                return;
+            }
+
             const targetTile = currentMap.tiles[targetRow][targetCol];
+
+            // 2. 走向「🗿 知識方尖碑 (tile 51)」時，直接觸發 5 層試煉之塔！
+            if (targetTile === 51) {
+                eventBus.emit('ENCOUNTER_ENEMY', 'obelisk_trial');
+                this.updateContextActionUI();
+                return;
+            }
+
+            // 3. 走向「🏛️ 商會 (tile 6)」時，直接打開商會與古幣兌換所！
+            if (targetTile === 6) {
+                eventBus.emit('OPEN_MERCHANT');
+                this.updateContextActionUI();
+                return;
+            }
             
             if (targetTile === 45) {
                 if (!player.equipment.includes('grappling_hook')) {
@@ -544,7 +602,7 @@ export class MovementSystem {
                 }
             }
 
-            // 🌟 平衡性修正：無帆船時踏入水格會消耗 2 點體力涉水游泳，造出「遠洋白帆船」後即可免費揚帆！
+            // 4. 航海/涉水平衡：無帆船時踏入水格會消耗 2 點體力涉水游泳，造出「遠洋白帆船」後即可免費揚帆！
             const hasBoat = player.equipment.includes('sailboat') || (player.inventory['sailboat'] || 0) > 0;
             if (targetTile === 7 && !hasBoat) {
                 if (player.hp <= 10) {
@@ -557,21 +615,6 @@ export class MovementSystem {
                 eventBus.emit('HUD_UPDATE');
             }
 
-// 🌟 請將 src/systems/MovementSystem.js 內 handleMove 與 interact 的基地營 NPC 判斷改為：
-            if (currentMap.id === 'safe_camp' || currentMap.id === 'campMap') {
-                const campNpcMap = {
-                    '6_4':  'guild_master',
-                    '6_7':  'blacksmith',
-                    '6_10': 'alchemist'
-                };
-                const npcKey = campNpcMap[`${targetRow}_${targetCol}`];
-                if (npcKey) {
-                    eventBus.emit('OPEN_CAMP_NPC', npcKey);
-                    this.updateContextActionUI();
-                    return;
-                }
-            }
-
             const walkableTiles = [0, 2, 7, 11, 12, 13, 14, 15, 18, 20, 30, 31, 32, 33, 34, 40, 42, 45];
 
             if (walkableTiles.includes(targetTile)) {
@@ -580,7 +623,7 @@ export class MovementSystem {
                 player.isSailing = (targetTile === 7);
 
                 // 野外長途探索微幅消耗體力 (每 18 步扣 1 HP)
-                if (currentMap.id !== 'safe_camp') {
+                if (!this.isSafeCamp(currentMap)) {
                     this.stepHungerCounter++;
                     if (this.stepHungerCounter >= 18) {
                         this.stepHungerCounter = 0;
@@ -596,7 +639,7 @@ export class MovementSystem {
 
                 if ([2, 11, 30, 31, 32, 33, 34].includes(targetTile)) {
                     const mapId = currentMap.id;
-                    if (mapId === 'safe_camp') eventBus.emit('CHANGE_MAP', 'starter_island_from_camp');
+                    if (this.isSafeCamp(currentMap)) eventBus.emit('CHANGE_MAP', 'starter_island_from_camp');
                     else if (targetTile === 11) eventBus.emit('CHANGE_MAP', 'campMap');
                     else if (mapId === 'starter_island') eventBus.emit('CHANGE_MAP', 'level2Map');
                     else if (mapId === 'desert_ruins') { if (targetTile === 30) eventBus.emit('CHANGE_MAP', 'poisonMap'); else eventBus.emit('CHANGE_MAP', 'starter_island'); }
@@ -609,7 +652,7 @@ export class MovementSystem {
                     return; 
                 }
 
-                if (currentMap.id !== 'safe_camp' && targetTile !== 7) {
+                if (!this.isSafeCamp(currentMap) && targetTile !== 7) {
                     const rand = Math.random();
                     if (rand < 0.015) eventBus.emit('GOBLIN_ENCOUNTER');
                     else if (rand < 0.075) eventBus.emit('ENCOUNTER_ENEMY', 'random_monster');
@@ -638,25 +681,17 @@ export class MovementSystem {
         else if (player.direction === 'left') targetCol -= 1;
         else if (player.direction === 'right') targetCol += 1;
 
-// 🌟 請將 src/systems/MovementSystem.js 內 handleMove 與 interact 的基地營 NPC 判斷改為：
-            if (currentMap.id === 'safe_camp' || currentMap.id === 'campMap') {
-                const campNpcMap = {
-                    '6_4':  'guild_master',
-                    '6_7':  'blacksmith',
-                    '6_10': 'alchemist'
-                };
-                const npcKey = campNpcMap[`${targetRow}_${targetCol}`];
-                if (npcKey) {
-                    eventBus.emit('OPEN_CAMP_NPC', npcKey);
-                    this.updateContextActionUI();
-                    return;
-                }
+        if (targetCol >= 0 && targetCol < currentMap.cols && targetRow >= 0 && targetRow < currentMap.rows) {
+            // 優先檢查是否面向安全基地營的駐守 NPC
+            const campNpcKey = this.getCampNpcAt(currentMap, targetRow, targetCol);
+            if (campNpcKey) {
+                eventBus.emit('OPEN_CAMP_NPC', campNpcKey);
+                return;
             }
 
-        if (targetCol >= 0 && targetCol < currentMap.cols && targetRow >= 0 && targetRow < currentMap.rows) {
             const targetTile = currentMap.tiles[targetRow][targetCol];
             
-            if (this.gameState.buildMode && currentMap.id === 'safe_camp') {
+            if (this.gameState.buildMode && this.isSafeCamp(currentMap)) {
                 const selectedKey = this.buildItems[this.gameState.buildIndex || 0];
                 const tileToPlace = this.buildTileIds[selectedKey];
                 
@@ -759,7 +794,7 @@ export class MovementSystem {
                     eventBus.emit('HUD_UPDATE');
                 }
                 eventBus.emit('START_FISHING');
-            }
+            } 
             else if (targetTile === 8) {
                 if ((player.inventory['bomb'] || 0) > 0) {
                     player.removeItem('bomb', 1); currentMap.tiles[targetRow][targetCol] = 0;

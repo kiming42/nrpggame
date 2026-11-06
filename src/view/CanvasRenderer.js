@@ -1,7 +1,5 @@
 // src/view/CanvasRenderer.js
-// 🌟 完整整合版 (含第二步光影迷霧 + 進階改造A 基地營實體 NPC 繪製)：
-// 1. 自動識別安全基地營 (支援 id 為 'safe_camp' 或 'campMap' 或含轉換箱 tile 24)
-// 2. 將 3 位核心 NPC 擺放在營地中央必經之路 (row: 6, col: 4 / 7 / 10)，一入營地即刻見到！
+// 🌟 零報錯完整版：修復 (row:6, col:13) 繪製方尖碑與 NPC 時中斷導致下半部畫面全黑的問題
 
 import { sprites } from '../data/assets.js';
 import { TILE_SIZE } from '../data/maps.js';
@@ -179,6 +177,49 @@ export class CanvasRenderer {
         ctx.fillRect(x + 16, y + 16, 16, 16);
     }
 
+    drawObeliskTile(x, y, gameTime = 0) {
+        const ctx = this.ctx;
+        const glow = Math.sin(gameTime * 0.1) * 3;
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(168, 85, 247, 0.35)';
+        ctx.beginPath();
+        ctx.ellipse(x + 24, y + 40, Math.max(10, 20 + glow), 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (!this.drawSprite('obelisk', x, y)) {
+            ctx.fillStyle = '#0f172a';
+            ctx.beginPath();
+            ctx.moveTo(x + 24, y + 4);
+            ctx.lineTo(x + 36, y + 16);
+            ctx.lineTo(x + 38, y + 42);
+            ctx.lineTo(x + 10, y + 42);
+            ctx.lineTo(x + 12, y + 16);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.strokeStyle = '#facc15';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillRect(x + 21, y + 14, 6, 6);
+            ctx.fillStyle = '#facc15';
+            ctx.fillRect(x + 22, y + 24, 4, 10);
+        }
+
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(20, 16, 19, 0.9)';
+        ctx.fillRect(x - 10, y - 16, 68, 18);
+        ctx.strokeStyle = '#a855f7';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x - 10, y - 16, 68, 18);
+        ctx.fillStyle = '#fde047';
+        ctx.fillText('🗼 試煉之塔', x + 24, y - 3);
+        ctx.restore();
+    }
+
     drawTentTile(x, y) {
         if (this.drawSprite('tent', x, y)) return;
         const ctx = this.ctx;
@@ -306,9 +347,11 @@ export class CanvasRenderer {
             t[1][3] = 11;
             t[1][8] = 11;
             t[2][6] = 6;
+            t[4][5] = 51;
             t[7][8] = 2;
         } else if (id === 'desert_ruins') {
             t[1][1] = 2;
+            t[5][6] = 51;
             t[10][9] = 30;
         } else if (id === 'poison_swamp') {
             t[1][1] = 2;
@@ -328,7 +371,8 @@ export class CanvasRenderer {
         } else if (isSafeCampMap(currentMap)) {
             t[10][4] = 11;
             t[10][9] = 6;
-            // 確保 3 位 NPC 所在格子與周圍暢通無阻
+            t[6][13] = 51;
+            t[10][11] = 51;
             CAMP_NPC_LIST.forEach(npc => {
                 if (t[npc.row] && t[npc.row][npc.col] !== undefined) {
                     t[npc.row][npc.col] = 0;
@@ -337,39 +381,32 @@ export class CanvasRenderer {
         }
     }
 
-    // 繪製安全基地營的 3 位實體駐守 NPC 與頭頂醒目名牌
     drawSafeCampNPCs(gameTime) {
         const npcBob = Math.sin(gameTime * 0.08) > 0 ? -2 : 0;
         const ctx = this.ctx;
 
+        ctx.save();
         CAMP_NPC_LIST.forEach(npc => {
             const nx = npc.col * TILE_SIZE;
             const ny = npc.row * TILE_SIZE;
 
-            // 1. 腳下金色魔法陣光環與陰影
             ctx.fillStyle = 'rgba(250, 204, 21, 0.28)';
             ctx.beginPath();
             ctx.ellipse(nx + 24, ny + 40, 18, 7, 0, 0, Math.PI * 2);
             ctx.fill();
 
-            // 2. 優先借用 merchant 圖示並套上職稱袍服，確保像素風格 100% 統一
             ctx.fillStyle = '#000000';
             ctx.fillRect(nx + 10, ny + 8 + npcBob, 28, 34);
-            // 披風/長袍
             ctx.fillStyle = npc.color;
             ctx.fillRect(nx + 12, ny + 22 + npcBob, 24, 18);
-            // 臉龐
             ctx.fillStyle = '#fed7aa';
             ctx.fillRect(nx + 14, ny + 12 + npcBob, 20, 11);
-            // 眼睛
             ctx.fillStyle = '#000000';
             ctx.fillRect(nx + 17, ny + 16 + npcBob, 3, 3);
             ctx.fillRect(nx + 28, ny + 16 + npcBob, 3, 3);
-            // 專屬帽飾
             ctx.fillStyle = npc.hatColor;
             ctx.fillRect(nx + 11, ny + 6 + npcBob, 26, 7);
 
-            // 3. 頭頂雙行醒目名牌
             ctx.font = 'bold 11px sans-serif';
             ctx.textAlign = 'center';
             ctx.fillStyle = 'rgba(20, 16, 19, 0.9)';
@@ -384,10 +421,11 @@ export class CanvasRenderer {
             ctx.font = 'bold 10px sans-serif';
             ctx.fillText(npc.name, nx + 24, ny - 2);
         });
+        ctx.restore();
     }
 
     renderDynamicLightingAndTorch(currentMap, player, screenPlayerX, screenPlayerY, gameTime) {
-        if (isSafeCampMap(currentMap)) return; // 安全基地營永遠陽光充足，方便找 NPC 與建設
+        if (isSafeCampMap(currentMap)) return;
 
         const cycle = (gameTime % 6000) / 6000;
         let darkness = 0;
@@ -476,7 +514,7 @@ export class CanvasRenderer {
         for (let r = 0; r < rows; r++) {
             for (let c = 0; c < cols; c++) {
                 const t = currentMap.tiles[r][c];
-                const isPortalOrTent = [2, 11, 30, 31, 32, 33, 34].includes(t);
+                const isPortalOrTent = [2, 11, 30, 31, 32, 33, 34, 51].includes(t);
                 const isExplored = isCamp || isPortalOrTent || (exploredSet && exploredSet.has(`${r}_${c}`));
 
                 if (!isExplored) {
@@ -486,6 +524,7 @@ export class CanvasRenderer {
                 else if (t === 19) mCtx.fillStyle = '#38bdf8';
                 else if (t === 1 || t === 17) mCtx.fillStyle = '#15803d';
                 else if ([2, 30, 31, 32, 33, 34].includes(t)) mCtx.fillStyle = '#facc15';
+                else if (t === 51) mCtx.fillStyle = '#a855f7';
                 else if (t === 11) mCtx.fillStyle = '#ea580c';
                 else mCtx.fillStyle = currentMap.id === 'desert_ruins' ? '#d97706' : (currentMap.id === 'ice_ruins' ? '#bae6fd' : '#4d922b');
 
@@ -693,12 +732,12 @@ export class CanvasRenderer {
                     }
                 }
                 else if (tile === 51) {
-                    if (!this.drawSprite('obelisk', x, y)) this.drawPortalTile(x, y, gameTime);
+                    this.drawObeliskTile(x, y, gameTime);
                 }
 
                 if (!isCamp) {
                     const distSq = (r - player.row) * (r - player.row) + (c - player.col) * (c - player.col);
-                    const isLandmark = [2, 6, 11, 30, 31, 32, 33, 34].includes(tile);
+                    const isLandmark = [2, 6, 11, 30, 31, 32, 33, 34, 51].includes(tile);
                     const isExplored = exploredSet && exploredSet.has(`${r}_${c}`);
 
                     if (!isExplored && !isLandmark) {
@@ -716,12 +755,10 @@ export class CanvasRenderer {
             }
         }
 
-        // 🌟 在安全基地營繪製 3 位實體駐守 NPC (位於 row: 6, col: 4 / 7 / 10，無論從左上或下方進入都一眼看見！)
         if (isCamp) {
             this.drawSafeCampNPCs(gameTime);
         }
 
-        // 4. 繪製玩家角色
         const bobOffset = Math.sin(gameTime * 0.08) > 0 ? -3 : 0;
         const px = player.col * TILE_SIZE;
         const py = player.row * TILE_SIZE;

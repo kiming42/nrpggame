@@ -1271,6 +1271,7 @@ export class UIManager {
                 avatar: '👑',
                 greeting: `「辛苦了，${p.name || 'Justin'}！無知迷霧仍在侵蝕外圍群島。\n\n目前你的公會榮譽等級為 Lv.${p.level || 1}。需要查看各島嶼的委託任務，還是打開群島海圖揚帆出征？」`,
                 actions: [
+                    { label: '🗼 挑戰【知識試煉之塔】(5層連戰)', fn: () => { dialogLayer.style.display = 'none'; eventBus.emit('ENCOUNTER_ENEMY', 'obelisk_trial'); } },
                     { label: '📜 查看委託任務', fn: () => { dialogLayer.style.display = 'none'; this.openToTab('tab-quests', 'QUESTS'); } },
                     { label: '⛵ 打開群島世界海圖', fn: () => { dialogLayer.style.display = 'none'; this.openToTab('tab-quests', 'WORLD_MAP'); } },
                     { label: '🎯 討伐錯題懸賞錄', fn: () => { dialogLayer.style.display = 'none'; this.openToTab('tab-mistakes'); } }
