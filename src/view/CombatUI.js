@@ -1,13 +1,64 @@
 // src/view/CombatUI.js
-// 🌟 完整終極版：
-// 1. 100% 對齊 index.html 真實 DOM ID (#enemies-chessboard, #arena-scenery-layer, #combat-skills-bar, #q-text 等)
-// 2. 分類題透過 enrichAnyClassifyQuestion 自動補全完整文字，絕不出現無說明的純 A, B, C, D
-// 3. 英文串字題自動留空「空白格」與「連字號」，玩家只需點擊純英文字母
-// 4. 填充題完整保留題目原句，點選詞卡時即時嵌入句子空格預覽
+// 🌟 第三步商業級改造 (終極完整版)：
+// 1. 內建「主線 9 大章節故事劇情引導系統 (Story Director)」，首次踏入各島嶼自動彈出世界觀與任務目標劇情
+// 2. 新增「⏳ 限時詠唱倒數計時條 (Quiz Countdown Bar)」，Boss 戰與精英戰具備緊張刺激感
+// 3. 新增「🔥 頭目戰半血狂暴覺醒 (Boss Enrage Phase)」視覺演出與狀態提示
+// 4. 完整保留分類題文字補全、英文串字預設空白格、填充題原句預覽與真實 HTML ID 對齊
 
 import { eventBus } from '../core/EventBus.js';
 import { Base64Strings, getPixelIconHtml } from '../data/assets.js';
 import { enrichAnyClassifyQuestion } from '../systems/QuestionSystem.js';
+
+// =========================================================================
+// 📖 主線章節故事劇本庫 (解決「沒有主題故事性」痛點)
+// =========================================================================
+export const CHAPTER_STORY_SCRIPTS = {
+    starter_island: {
+        title: '📜 序章：無知迷霧與翠綠荒島',
+        speaker: '大賢者艾爾文 (古卷殘影)',
+        text: '「甦醒吧，年輕的知識守護者！百年前『無知迷霧』吞噬了真理圖書館，將四科知識化為散落群島的記憶碎片。\n\n這座【翠綠新手荒島】是你的起點。採集橡木與礦石、修復裝備，並運用中文、英文、科學與人文的知識詠唱戰技，穿過右下方的遠古傳送門吧！」'
+    },
+    safe_camp: {
+        title: '⛺ 安全區：冒險者皇家基地營',
+        speaker: '營地總管 巴頓',
+        text: '「歡迎回到【皇家基地營】！這裏不受無知迷霧侵襲。\n\n你可以在東北方飲用『治癒之泉』恢復全部體力，在溫室耕地播種草藥，或者按下 [B 鍵 / 🧱 磚牆鈕] 自由建設你的專屬據點！」'
+    },
+    desert_ruins: {
+        title: '⏳ 第二章：時光沙漏遺跡',
+        speaker: '考古學者 羅蘭',
+        text: '「黃沙掩埋了昔日輝煌的【時光沙漏遺跡】。傳聞西北方的古老石牆出現了裂縫，若能於工坊製作『開山火藥桶』將其炸開，便能奪回失落的古代秘寶！\n\n小心沙漠中的骸骨戰士，唯有精準的知識詠唱能擊碎牠們的護甲！」'
+    },
+    poison_swamp: {
+        title: '☠️ 第三章：劇毒迷瘴沼澤',
+        speaker: '煉金術士 薇薇安',
+        text: '「前方的【劇毒迷瘴沼澤】瀰漫著腐蝕紫霧！在沒有配戴『淨化防毒面具』前，切勿長時間踏入紫色毒水。\n\n這裏的針葉林與紫晶礦蘊含強大魔力，收集它們來鍛造二階神兵吧！」'
+    },
+    ice_ruins: {
+        title: '❄️ 第四章：永凍冰晶神殿',
+        speaker: '極地守望者 弗羅斯',
+        text: '「刺骨寒風封印了【永凍冰晶神殿】！神殿四周盡是堅硬的萬年玄冰與藍寶石晶簇，普通工具難以開採。\n\n擊退寒冰魔物、點亮松脂火把，尋找通往深海遺跡的冰封漩渦！」'
+    },
+    deep_sea: {
+        title: '🔱 第五章：亞特蘭提斯深海',
+        speaker: '人魚祭司 珊娜',
+        text: '「歡迎來到沉沒千年的【亞特蘭提斯深海】！幽暗的海床遍佈珍貴的夜光珊瑚與深海秘銀。\n\n在深海威壓下，魔物的攻勢將更加猛烈，請務必準備充足的料理與藥水！」'
+    },
+    clockwork: {
+        title: '⚙️ 第六章：泰坦發條要塞',
+        speaker: '機械工匠 尼古拉',
+        text: '「這座【泰坦發條要塞】由上古齒輪與高壓電流驅動！要塞內部的『紅色電子閘門』已被鎖死，你必須搜集或合成『魔力電池』才能將其開啟，通往星辰浮空島！」'
+    },
+    floating: {
+        title: '🌌 第七章：星辰虛空群島',
+        speaker: '星象導師 賽莉亞',
+        text: '「我們已抵達天空盡頭的【星辰虛空群島】！島嶼之間是萬丈深淵，唯有裝備『精鋼飛索抓鉤』方能跨越虛空。\n\n前方就是最後的聖殿，準備好迎接最終的知識試煉了嗎？」'
+    },
+    boss_arena: {
+        title: '👑 終章：創世獸神聖殿',
+        speaker: '混沌獸神 巴哈姆特',
+        text: '「凡人，你竟能破開重重迷霧來到本座面前！\n\n在【創世獸神聖殿】中，你的每一次詠唱都將受到時間的考驗！展現你所學的一切智慧，與本座決一死戰吧！」'
+    }
+};
 
 export class CombatUI {
     constructor() {
@@ -36,9 +87,179 @@ export class CombatUI {
         this.isAnimating = false;
         this.speedMultiplier = 1;
 
+        // ⏳ 限時詠唱計時器狀態
+        this.quizTimerInterval = null;
+        this.quizTimeLeft = 0;
+        this.quizMaxTime = 25;
+
+        // 🔥 記錄本場戰鬥已觸發狂暴的 Boss
+        this.enragedBossIndices = new Set();
+
+        // 📜 已讀章節故事紀錄
+        this.seenChapters = new Set();
+        this.loadSeenChapters();
+
+        this.cleanDuplicateHudDom();
         this.injectArenaDecorAndHero();
         this.injectSkillIcons();
+        this.injectQuizTimerBar();
         this.bindEvents();
+        this.bindStoryDirector();
+    }
+
+    cleanDuplicateHudDom() {
+        const hud = document.getElementById('hud');
+        if (!hud) return;
+        const rightGroups = hud.querySelectorAll('.srpg-top-right');
+        if (rightGroups.length > 1) {
+            rightGroups[0].remove();
+        }
+    }
+
+    loadSeenChapters() {
+        try {
+            const raw = localStorage.getItem('rpg_seen_chapters');
+            if (raw) {
+                JSON.parse(raw).forEach(k => this.seenChapters.add(k));
+            }
+        } catch (e) {}
+    }
+
+    saveSeenChapters() {
+        try {
+            localStorage.setItem('rpg_seen_chapters', JSON.stringify(Array.from(this.seenChapters)));
+        } catch (e) {}
+    }
+
+    // 🌟 第三步核心 1：章節故事劇情導演系統 (Story Director)
+    bindStoryDirector() {
+        const checkAndPlayStory = (mapId) => {
+            if (!mapId || this.seenChapters.has(mapId)) return;
+            const script = CHAPTER_STORY_SCRIPTS[mapId];
+            if (!script) return;
+
+            this.seenChapters.add(mapId);
+            this.saveSeenChapters();
+
+            setTimeout(() => {
+                const dialogLayer = document.getElementById('pixel-dialog-layer');
+                const titleEl = document.getElementById('pixel-dialog-title');
+                const textEl = document.getElementById('pixel-dialog-text');
+                if (dialogLayer && titleEl && textEl) {
+                    titleEl.innerHTML = `${script.title} <span style="font-size:12px; color:#b45309; margin-left:6px;">— ${script.speaker}</span>`;
+                    textEl.innerText = script.text;
+                    dialogLayer.style.display = 'flex';
+                } else {
+                    eventBus.emit('SHOW_DIALOG', {
+                        title: `${script.title} (${script.speaker})`,
+                        text: script.text
+                    });
+                }
+            }, 350);
+        };
+
+        // 監聽開始遊戲與切換地圖事件
+        const btnStart = document.getElementById('btn-start-game');
+        const btnNew = document.getElementById('btn-new-game');
+        if (btnStart) {
+            btnStart.addEventListener('click', () => {
+                setTimeout(() => checkAndPlayStory('starter_island'), 500);
+            });
+        }
+        if (btnNew) {
+            btnNew.addEventListener('click', () => {
+                this.seenChapters.clear();
+                this.saveSeenChapters();
+                setTimeout(() => checkAndPlayStory('starter_island'), 500);
+            });
+        }
+
+        eventBus.on('CHANGE_MAP', (targetKey) => {
+            const keyToMapId = {
+                campMap: 'safe_camp',
+                starter_island: 'starter_island',
+                starter_island_from_camp: 'starter_island',
+                testMap: 'starter_island',
+                level2Map: 'desert_ruins',
+                level2Map_from_poison: 'desert_ruins',
+                poisonMap: 'poison_swamp',
+                poisonMap_from_ice: 'poison_swamp',
+                iceMap: 'ice_ruins',
+                ice_ruins_from_sea: 'ice_ruins',
+                deepSeaMap: 'deep_sea',
+                deep_sea_from_clock: 'deep_sea',
+                clockworkMap: 'clockwork',
+                clockwork_from_float: 'clockwork',
+                floatingMap: 'floating',
+                floating_from_boss: 'floating',
+                bossMap: 'boss_arena'
+            };
+            const mId = keyToMapId[targetKey] || targetKey;
+            checkAndPlayStory(mId);
+        });
+    }
+
+    // 🌟 第三步核心 2：在答題視窗頂部注入「⏳ 限時詠唱倒數計時條」
+    injectQuizTimerBar() {
+        if (!this.quizModal || document.getElementById('quiz-timer-wrap')) return;
+        const header = this.quizModal.querySelector('.quiz-parchment-header');
+        if (!header) return;
+
+        const timerWrap = document.createElement('div');
+        timerWrap.id = 'quiz-timer-wrap';
+        timerWrap.style.cssText = 'width:100%; height:20px; background:#2b1d0e; border-bottom:2px solid #5c3a21; position:relative; overflow:hidden; display:flex; align-items:center;';
+        timerWrap.innerHTML = `
+            <div id="quiz-timer-fill" style="width:100%; height:100%; background:#16a34a; transition:width 0.25s linear, background-color 0.3s;"></div>
+            <span id="quiz-timer-label" style="position:absolute; left:0; top:0; width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:900; color:#ffffff; text-shadow:1px 1px 0 #000;">⏳ 詠唱倒數：25s</span>
+        `;
+        header.insertAdjacentElement('afterend', timerWrap);
+    }
+
+    startQuizTimer() {
+        this.clearQuizTimer();
+        // 檢查場上是否有 Boss 或狂暴魔物：Boss 戰限時 20 秒，一般戰鬥 30 秒
+        const hasBoss = Array.isArray(this.currentState?.enemies) && this.currentState.enemies.some(e => e.hp > 0 && (e.isBoss || e.maxHp >= 350));
+        this.quizMaxTime = hasBoss ? 20 : 30;
+        this.quizTimeLeft = this.quizMaxTime;
+        this.updateQuizTimerUI();
+
+        this.quizTimerInterval = setInterval(() => {
+            if (this.isAnimating || !this.quizModal || this.quizModal.style.display === 'none') {
+                this.clearQuizTimer();
+                return;
+            }
+            this.quizTimeLeft = Math.max(0, this.quizTimeLeft - 0.25);
+            this.updateQuizTimerUI();
+
+            if (this.quizTimeLeft <= 0) {
+                this.clearQuizTimer();
+                eventBus.emit('SHOW_TOAST', '⏳ 詠唱超時！咒語反噬並遭到魔物突襲！');
+                this.handleAnswer('__TIME_OUT_WRONG__');
+            }
+        }, 250);
+    }
+
+    updateQuizTimerUI() {
+        const fillEl = document.getElementById('quiz-timer-fill');
+        const labelEl = document.getElementById('quiz-timer-label');
+        if (!fillEl || !labelEl) return;
+
+        const pct = Math.max(0, Math.min(100, (this.quizTimeLeft / this.quizMaxTime) * 100));
+        fillEl.style.width = `${pct}%`;
+
+        if (pct > 50) fillEl.style.backgroundColor = '#16a34a';
+        else if (pct > 25) fillEl.style.backgroundColor = '#d97706';
+        else fillEl.style.backgroundColor = '#dc2626';
+
+        const sec = Math.ceil(this.quizTimeLeft);
+        labelEl.innerText = `⏳ 限時詠唱倒數：${sec} 秒 ${sec <= 5 ? '⚠️ 快作答！' : ''}`;
+    }
+
+    clearQuizTimer() {
+        if (this.quizTimerInterval) {
+            clearInterval(this.quizTimerInterval);
+            this.quizTimerInterval = null;
+        }
     }
 
     injectSkillIcons() {
@@ -161,6 +382,7 @@ export class CombatUI {
             closeBtn.onclick = (e) => {
                 e.preventDefault();
                 if (this.isAnimating) return;
+                this.clearQuizTimer();
                 if (this.quizModal) this.quizModal.style.display = 'none';
             };
         }
@@ -186,6 +408,7 @@ export class CombatUI {
             escBtn.onclick = (e) => {
                 e.preventDefault();
                 if (this.isAnimating) return;
+                this.clearQuizTimer();
                 eventBus.emit('COMBAT_ESCAPE');
             };
         }
@@ -200,6 +423,7 @@ export class CombatUI {
         }
 
         const openTab = (tabId) => {
+            this.clearQuizTimer();
             const floatBagBtn = document.getElementById('btn-float-bag');
             if (floatBagBtn) floatBagBtn.click();
             const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
@@ -220,6 +444,7 @@ export class CombatUI {
         if (bFs) bFs.onclick = () => document.getElementById('btn-hud-fullscreen')?.click();
         const bCamp = document.getElementById('btn-arena-camp');
         if (bCamp) bCamp.onclick = () => {
+            this.clearQuizTimer();
             eventBus.emit('COMBAT_ESCAPE');
             eventBus.emit('CHANGE_MAP', 'campMap');
         };
@@ -246,6 +471,11 @@ export class CombatUI {
             eventBus.emit('SHOW_TOAST', '題庫讀取失敗！請確認在「🧭 題庫」中至少勾選了一個溫習單元。');
             eventBus.emit('COMBAT_ESCAPE');
             return;
+        }
+
+        this.clearQuizTimer();
+        if (state.turn === 1) {
+            this.enragedBossIndices.clear();
         }
 
         if (this.hud) this.hud.style.display = 'none';
@@ -278,6 +508,7 @@ export class CombatUI {
             this.quizTitle.innerText = `⚔️ 詠唱【${skName}】｜${headerUnit} • ${q.qType || '選擇題'}`;
         }
         this.quizModal.style.display = 'flex';
+        this.startQuizTimer();
     }
 
     getEnemySprite(enemy) {
@@ -288,6 +519,7 @@ export class CombatUI {
         return Base64Strings[enemy.sprite] || Base64Strings.witch;
     }
 
+    // 🌟 第三步核心 3：頭目戰與精英怪「半血狂暴二階段 (Enrage Phase)」檢測與視覺特效
     renderEnemies(state) {
         if (!this.chessboard) return;
         this.chessboard.innerHTML = '';
@@ -296,19 +528,33 @@ export class CombatUI {
             const isTargeted = (idx === state.selectedTargetIndex) && enemy.hp > 0;
             const isDead = enemy.hp <= 0;
             const hpPercent = Math.max(0, (enemy.hp / enemy.maxHp) * 100);
+
+            // 檢查頭目/高血量精英是否跌破 50% HP 進入狂暴狀態
+            const isBossOrElite = enemy.isBoss || enemy.maxHp >= 300;
+            const isEnraged = !isDead && isBossOrElite && hpPercent <= 50;
+
+            if (isEnraged && !this.enragedBossIndices.has(idx)) {
+                this.enragedBossIndices.add(idx);
+                enemy.atk = Math.round((enemy.atk || 35) * 1.35);
+                eventBus.emit('SHOW_TOAST', `🔥 警告！【${enemy.name}】生命值低於 50%，進入【狂暴二階段】（攻擊力大幅提升）！`);
+            }
+
             const statusHtml = this.renderStatusBadgesHtml(enemy.statuses || []);
+            const enrageBadge = isEnraged
+                ? `<span style="background:#dc2626; color:#fef08a; border:1px solid #fff; padding:0 4px; font-size:10px; font-weight:900; animation:pulse 0.8s infinite;">🔥狂暴</span>`
+                : '';
 
             const card = document.createElement('div');
             card.id = `enemy-card-${idx}`;
             card.className = `arena-enemy-card ${isTargeted ? 'targeted' : ''} ${isDead ? 'dead' : ''}`;
             card.innerHTML = `
                 <div id="enemy-float-${idx}" class="dmg-container"></div>
-                <div style="display:flex; gap:2px; min-height:16px; justify-content:center;">${statusHtml}</div>
+                <div style="display:flex; gap:2px; min-height:16px; justify-content:center;">${enrageBadge}${statusHtml}</div>
                 <div class="arena-lock-label">${isTargeted ? '▼ 目標' : '&nbsp;'}</div>
-                <div class="arena-unit-name">${enemy.name}</div>
-                <img class="arena-enemy-sprite" src="${this.getEnemySprite(enemy)}" alt="" />
+                <div class="arena-unit-name" style="${isEnraged ? 'color:#fca5a5;' : ''}">${enemy.name}</div>
+                <img class="arena-enemy-sprite" src="${this.getEnemySprite(enemy)}" style="${isEnraged ? 'filter:drop-shadow(0 0 8px #ef4444) sepia(0.4) saturate(3);' : ''}" alt="" />
                 <div class="arena-hp-bar">
-                    <div class="arena-hp-fill" style="width:${hpPercent}%;"></div>
+                    <div class="arena-hp-fill" style="width:${hpPercent}%; ${isEnraged ? 'background:#dc2626;' : ''}"></div>
                     <span class="arena-hp-text">${enemy.hp}</span>
                 </div>
                 <div class="arena-atk-label">⚔️${enemy.atk || 26} <span style="color:#ffeb3b; font-size:9px;">${enemy.weaknessText || ''}</span></div>
@@ -473,31 +719,26 @@ export class CombatUI {
         this.qOptions.innerHTML = '';
         this.optionButtons = [];
 
-        // 1. 分類題 (完整顯示「A. 勤換衛生巾」與「1. 輸精管」文字字卡)
         if (isClassify) {
             this.renderInteractiveClassification(questionData, resolvedAns);
             return;
         }
 
-        // 2. 看圖填充題
         if (qType === '看圖填充題' || questionData.interactiveType === 'fill_blanks') {
             this.renderInteractiveMultiBlank(questionData, resolvedAns);
             return;
         }
 
-        // 3. 英文串字 (自動預設空白格與連字號)
         if (qType === '英文串字' && /^[A-Za-z\s-]{3,28}$/.test(resolvedAns.trim())) {
             this.renderInteractiveSpelling(questionData, resolvedAns.trim());
             return;
         }
 
-        // 4. 填充題 (完整保留題目原句，並將空格轉為可預覽黃色填空槽)
         if (['填充題', '中文填充題', '英文填充題', '填空題'].includes(qType)) {
             this.renderInteractiveSingleBlank(questionData, resolvedAns);
             return;
         }
 
-        // 5. 簡答題 / 情境題 / 選擇題 / 字詞解釋
         const shuffledOpts = [...(questionData.options || [])].sort(() => Math.random() - 0.5);
         shuffledOpts.forEach((option) => {
             const btn = document.createElement('button');
@@ -613,7 +854,6 @@ export class CombatUI {
     }
 
     renderInteractiveClassification(questionData, resolvedAns) {
-        // 先通過萬能補全器確保 categories 與 items 齊全（連舊存檔錯題也能自動恢復項目文字！）
         enrichAnyClassifyQuestion(questionData);
 
         const buckets = [];
@@ -626,7 +866,6 @@ export class CombatUI {
             });
             allItems = questionData.items.map(it => it.label);
         } else {
-            // 若是配對題 (如 1配B｜2配C)，完整顯示題幹內的所有行數 (絕不截斷第二行項目說明！)
             const fullPrompt = String(questionData.question || questionData.prompt || '').replace(/\n/g, '<br>');
             this.qText.innerHTML = `<span style="background:#7c3aed; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; margin-right:6px; vertical-align:middle;">分類題</span><span>${fullPrompt}</span>`;
 
@@ -820,7 +1059,6 @@ export class CombatUI {
         this.qOptions.appendChild(wrap);
     }
 
-    // 🌟 英文串字預設留空「空白格」與「連字號」，玩家只需點擊純英文字母
     renderInteractiveSpelling(questionData, targetWord) {
         const cleanWord = targetWord.trim();
         const allChars = cleanWord.split('');
@@ -953,6 +1191,7 @@ export class CombatUI {
     }
 
     handleAnswer(selectedOption) {
+        this.clearQuizTimer();
         this.isAnimating = true;
         this.optionButtons.forEach(b => b.disabled = true);
         if (this.quizModal) this.quizModal.style.display = 'none';
@@ -1034,6 +1273,7 @@ export class CombatUI {
     }
 
     hide() {
+        this.clearQuizTimer();
         if (this.layer) this.layer.style.display = 'none';
         if (this.quizModal) this.quizModal.style.display = 'none';
         if (this.hud) this.hud.style.display = 'flex';

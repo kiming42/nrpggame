@@ -543,13 +543,17 @@ export class MovementSystem {
                 }
             }
 
-            // 航海門檻：需造出「遠洋白帆船 (sailboat)」才可踏入水格航行
+            // 🌟 平衡性修正：無帆船時踏入水格會消耗 2 點體力涉水游泳，造出「遠洋白帆船」後即可免費揚帆！
             const hasBoat = player.equipment.includes('sailboat') || (player.inventory['sailboat'] || 0) > 0;
             if (targetTile === 7 && !hasBoat) {
-                eventBus.emit('SHOW_TOAST', '⛵ 前方是深水海域！請先於【⚒️ 製作 -> 工具】造出「遠洋白帆船」才能下海航行！');
-                eventBus.emit('PLAY_SOUND', 'bump');
-                this.updateContextActionUI();
-                return;
+                if (player.hp <= 10) {
+                    eventBus.emit('SHOW_TOAST', '💦 體力過低無法涉水游泳！請補充食物或於【⚒️ 製作】造出「遠洋白帆船」！');
+                    eventBus.emit('PLAY_SOUND', 'bump');
+                    this.updateContextActionUI();
+                    return;
+                }
+                player.hp -= 2;
+                eventBus.emit('HUD_UPDATE');
             }
 
             const walkableTiles = [0, 2, 7, 11, 12, 13, 14, 15, 18, 20, 30, 31, 32, 33, 34, 40, 42, 45];
@@ -716,12 +720,15 @@ export class MovementSystem {
             else if (targetTile === 7 || targetTile === 16 || targetTile === 40) { 
                 const hasRod = player.equipment.includes('fishing_rod') || (player.inventory['fishing_rod'] || 0) > 0;
                 if (!hasRod) {
-                    eventBus.emit('PLAY_SOUND', 'bump');
-                    eventBus.emit('SHOW_TOAST', '🎣 尚未持有釣竿！請先於【⚒️ 製作 -> 工具】製作「青竹釣魚竿」！');
-                    return;
+                    if (player.hp <= 8) {
+                        eventBus.emit('SHOW_TOAST', '💦 體力過低無法徒手捕魚！請先休息或於【⚒️ 製作】打造「青竹釣魚竿」。');
+                        return;
+                    }
+                    player.hp -= 2;
+                    eventBus.emit('HUD_UPDATE');
                 }
                 eventBus.emit('START_FISHING');
-            } 
+            }
             else if (targetTile === 8) {
                 if ((player.inventory['bomb'] || 0) > 0) {
                     player.removeItem('bomb', 1); currentMap.tiles[targetRow][targetCol] = 0;
