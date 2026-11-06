@@ -557,12 +557,12 @@ export class MovementSystem {
                 eventBus.emit('HUD_UPDATE');
             }
 
-            // 🌟 [進階改造 A] 在安全基地營走向駐守 NPC 時，直接觸發視覺小說對話！
-            if (currentMap.id === 'safe_camp') {
+// 🌟 請將 src/systems/MovementSystem.js 內 handleMove 與 interact 的基地營 NPC 判斷改為：
+            if (currentMap.id === 'safe_camp' || currentMap.id === 'campMap') {
                 const campNpcMap = {
-                    '8_6': 'guild_master',
-                    '8_10': 'blacksmith',
-                    '8_13': 'alchemist'
+                    '6_4':  'guild_master',
+                    '6_7':  'blacksmith',
+                    '6_10': 'alchemist'
                 };
                 const npcKey = campNpcMap[`${targetRow}_${targetCol}`];
                 if (npcKey) {
@@ -638,19 +638,21 @@ export class MovementSystem {
         else if (player.direction === 'left') targetCol -= 1;
         else if (player.direction === 'right') targetCol += 1;
 
-        if (currentMap.id === 'safe_camp') {
+// 🌟 請將 src/systems/MovementSystem.js 內 handleMove 與 interact 的基地營 NPC 判斷改為：
+            if (currentMap.id === 'safe_camp' || currentMap.id === 'campMap') {
                 const campNpcMap = {
-                    '8_6': 'guild_master',
-                    '8_10': 'blacksmith',
-                    '8_13': 'alchemist'
+                    '6_4':  'guild_master',
+                    '6_7':  'blacksmith',
+                    '6_10': 'alchemist'
                 };
                 const npcKey = campNpcMap[`${targetRow}_${targetCol}`];
                 if (npcKey) {
                     eventBus.emit('OPEN_CAMP_NPC', npcKey);
+                    this.updateContextActionUI();
                     return;
                 }
             }
-            
+
         if (targetCol >= 0 && targetCol < currentMap.cols && targetRow >= 0 && targetRow < currentMap.rows) {
             const targetTile = currentMap.tiles[targetRow][targetCol];
             

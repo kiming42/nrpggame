@@ -1,13 +1,24 @@
 // src/view/CanvasRenderer.js
-// 🌟 第二步商業級改造：
-// 1. 探索戰爭迷霧 (Fog of War)：自動記錄並撥開已探索區域，右上角羅盤小地圖同步顯示迷霧
-// 2. 動態日夜光影與搖曳火把照明圈 (Dynamic Lighting & Torch Aura)：支援黃昏夕陽、黑夜暗幕與火把/提燈視野擴大
-// 3. 畫面微震打擊感 (Screen Shake) 與浮動文字特效：採集敲擊時自動觸發震動與進度反饋
-// 4. 動態水面波紋與魔法傳送門/治癒泉呼吸光暈
+// 🌟 完整整合版 (含第二步光影迷霧 + 進階改造A 基地營實體 NPC 繪製)：
+// 1. 自動識別安全基地營 (支援 id 為 'safe_camp' 或 'campMap' 或含轉換箱 tile 24)
+// 2. 將 3 位核心 NPC 擺放在營地中央必經之路 (row: 6, col: 4 / 7 / 10)，一入營地即刻見到！
 
 import { sprites } from '../data/assets.js';
 import { TILE_SIZE } from '../data/maps.js';
 import { eventBus } from '../core/EventBus.js';
+
+export const CAMP_NPC_LIST = [
+    { id: 'guild_master', row: 6, col: 4,  name: '公會會長 亞瑟', role: '👑 任務/海圖', color: '#2563eb', hatColor: '#facc15' },
+    { id: 'blacksmith',   row: 6, col: 7,  name: '鐵匠大師 托爾', role: '🏰 據點升級', color: '#dc2626', hatColor: '#475569' },
+    { id: 'alchemist',    row: 6, col: 10, name: '煉金導師 薇薇安', role: '⚗️ 治療/秘訣', color: '#7c3aed', hatColor: '#f472b6' }
+];
+
+export function isSafeCampMap(currentMap) {
+    if (!currentMap) return false;
+    if (currentMap.id === 'safe_camp' || currentMap.id === 'campMap') return true;
+    if (String(currentMap.chapterName || '').includes('基地')) return true;
+    return false;
+}
 
 export class CanvasRenderer {
     constructor(canvasId) {
@@ -22,15 +33,12 @@ export class CanvasRenderer {
         this.cameraX = 0;
         this.cameraY = 0;
 
-        // 畫面震動參數
         this.shakeTimer = 0;
         this.shakeMagnitude = 0;
 
-        // 戰爭迷霧探索紀錄 key: `${mapId}` -> Set of `${r}_${c}`
         this.exploredMaps = {};
         this.loadFogData();
 
-        // 離屏光影遮罩 Canvas (用於繪製柔和鏤空火把照明圈)
         this.lightCanvas = document.createElement('canvas');
         this.lightCanvas.width = 960;
         this.lightCanvas.height = 540;
@@ -49,7 +57,6 @@ export class CanvasRenderer {
         }
     }
 
-    // 綁定打擊感事件：當產生粒子或碰撞時自動觸發微震動
     bindJuiceEvents() {
         eventBus.on('SPAWN_PARTICLES', (data) => {
             if (!data) return;
@@ -101,9 +108,8 @@ export class CanvasRenderer {
         } catch (e) {}
     }
 
-    // 更新玩家周圍的探索迷霧
     updateFogOfWar(mapId, playerRow, playerCol, radius = 4) {
-        if (mapId === 'safe_camp') return;
+        if (mapId === 'safe_camp' || mapId === 'campMap') return;
         if (!this.exploredMaps[mapId]) {
             this.exploredMaps[mapId] = new Set();
         }
@@ -196,7 +202,6 @@ export class CanvasRenderer {
 
     drawWaterTile(x, y, gameTime, r, c) {
         this.drawSprite('water', x, y);
-        // 動態海浪反光白紋
         const ctx = this.ctx;
         const waveShift = Math.floor(Math.sin(gameTime * 0.06 + r * 0.7 + c * 0.5) * 4);
         ctx.fillStyle = 'rgba(224, 242, 254, 0.45)';
@@ -320,30 +325,84 @@ export class CanvasRenderer {
         } else if (id === 'floating') {
             t[1][1] = 33;
             t[10][9] = 2;
-        } else if (id === 'safe_camp') {
+        } else if (isSafeCampMap(currentMap)) {
             t[10][4] = 11;
+            t[10][9] = 6;
+            // 確保 3 位 NPC 所在格子與周圍暢通無阻
+            CAMP_NPC_LIST.forEach(npc => {
+                if (t[npc.row] && t[npc.row][npc.col] !== undefined) {
+                    t[npc.row][npc.col] = 0;
+                }
+            });
         }
     }
 
-    // 繪製日夜光影、黃昏色溫與玩家動態火把照明圈
+    // 繪製安全基地營的 3 位實體駐守 NPC 與頭頂醒目名牌
+    drawSafeCampNPCs(gameTime) {
+        const npcBob = Math.sin(gameTime * 0.08) > 0 ? -2 : 0;
+        const ctx = this.ctx;
+
+        CAMP_NPC_LIST.forEach(npc => {
+            const nx = npc.col * TILE_SIZE;
+            const ny = npc.row * TILE_SIZE;
+
+            // 1. 腳下金色魔法陣光環與陰影
+            ctx.fillStyle = 'rgba(250, 204, 21, 0.28)';
+            ctx.beginPath();
+            ctx.ellipse(nx + 24, ny + 40, 18, 7, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 2. 優先借用 merchant 圖示並套上職稱袍服，確保像素風格 100% 統一
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(nx + 10, ny + 8 + npcBob, 28, 34);
+            // 披風/長袍
+            ctx.fillStyle = npc.color;
+            ctx.fillRect(nx + 12, ny + 22 + npcBob, 24, 18);
+            // 臉龐
+            ctx.fillStyle = '#fed7aa';
+            ctx.fillRect(nx + 14, ny + 12 + npcBob, 20, 11);
+            // 眼睛
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(nx + 17, ny + 16 + npcBob, 3, 3);
+            ctx.fillRect(nx + 28, ny + 16 + npcBob, 3, 3);
+            // 專屬帽飾
+            ctx.fillStyle = npc.hatColor;
+            ctx.fillRect(nx + 11, ny + 6 + npcBob, 26, 7);
+
+            // 3. 頭頂雙行醒目名牌
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(20, 16, 19, 0.9)';
+            ctx.fillRect(nx - 22, ny - 26, 92, 28);
+            ctx.strokeStyle = '#facc15';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(nx - 22, ny - 26, 92, 28);
+
+            ctx.fillStyle = '#fde047';
+            ctx.fillText(npc.role, nx + 24, ny - 14);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.fillText(npc.name, nx + 24, ny - 2);
+        });
+    }
+
     renderDynamicLightingAndTorch(currentMap, player, screenPlayerX, screenPlayerY, gameTime) {
+        if (isSafeCampMap(currentMap)) return; // 安全基地營永遠陽光充足，方便找 NPC 與建設
+
         const cycle = (gameTime % 6000) / 6000;
         let darkness = 0;
-        let ambientTint = '10, 15, 35'; // 預設夜晚深藍
+        let ambientTint = '10, 15, 35';
 
-        // 0.35 ~ 0.50：黃昏夕陽氛圍
         if (cycle >= 0.35 && cycle <= 0.50) {
             const duskRatio = Math.sin(((cycle - 0.35) / 0.15) * Math.PI);
             this.ctx.fillStyle = `rgba(234, 88, 12, ${duskRatio * 0.22})`;
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         }
 
-        // 0.48 ~ 0.92：夜晚降臨
         if (cycle > 0.48 && cycle < 0.92) {
             darkness = Math.sin(((cycle - 0.48) / 0.44) * Math.PI) * 0.72;
         }
 
-        // 特殊章節固有幽暗氛圍
         if (currentMap.id === 'poison_swamp') {
             darkness = Math.max(darkness, 0.32);
             ambientTint = '20, 10, 38';
@@ -360,19 +419,16 @@ export class CanvasRenderer {
         const lCtx = this.lightCtx;
         lCtx.clearRect(0, 0, 960, 540);
 
-        // 1. 鋪滿夜幕遮罩
         lCtx.globalCompositeOperation = 'source-over';
         lCtx.fillStyle = `rgba(${ambientTint}, ${darkness})`;
         lCtx.fillRect(0, 0, 960, 540);
 
-        // 2. 計算火把/提燈照明半徑 (帶呼吸搖曳效果)
         const hasLantern = player.equipment?.includes('lantern') || player.equipment?.includes('torch_light') ||
                            (player.inventory?.['lantern'] || 0) > 0 || (player.inventory?.['torch_light'] || 0) > 0;
         const baseRadius = hasLantern ? 240 : 145;
         const flicker = Math.sin(gameTime * 0.22) * 6 + Math.cos(gameTime * 0.37) * 4;
         const lightRadius = baseRadius + flicker;
 
-        // 3. 在離屏遮罩上「挖空」玩家周圍的光圈
         lCtx.globalCompositeOperation = 'destination-out';
         const cutGrad = lCtx.createRadialGradient(screenPlayerX, screenPlayerY, 18, screenPlayerX, screenPlayerY, lightRadius);
         cutGrad.addColorStop(0, 'rgba(0, 0, 0, 1)');
@@ -383,10 +439,8 @@ export class CanvasRenderer {
         lCtx.arc(screenPlayerX, screenPlayerY, lightRadius, 0, Math.PI * 2);
         lCtx.fill();
 
-        // 將光影遮罩貼回主畫布
         this.ctx.drawImage(this.lightCanvas, 0, 0);
 
-        // 4. 疊加一層溫暖的橙黃火光暈染
         const warmGrad = this.ctx.createRadialGradient(screenPlayerX, screenPlayerY, 8, screenPlayerX, screenPlayerY, lightRadius * 0.85);
         warmGrad.addColorStop(0, 'rgba(255, 190, 70, 0.22)');
         warmGrad.addColorStop(0.6, 'rgba(255, 140, 40, 0.08)');
@@ -417,12 +471,13 @@ export class CanvasRenderer {
         const cellW = 68 / cols;
         const cellH = 68 / rows;
         const exploredSet = this.exploredMaps[currentMap.id];
+        const isCamp = isSafeCampMap(currentMap);
 
         for (let r = 0; r < rows; r++) {
             for (let c = 0; c < cols; c++) {
                 const t = currentMap.tiles[r][c];
                 const isPortalOrTent = [2, 11, 30, 31, 32, 33, 34].includes(t);
-                const isExplored = currentMap.id === 'safe_camp' || isPortalOrTent || (exploredSet && exploredSet.has(`${r}_${c}`));
+                const isExplored = isCamp || isPortalOrTent || (exploredSet && exploredSet.has(`${r}_${c}`));
 
                 if (!isExplored) {
                     mCtx.fillStyle = '#0f172a';
@@ -437,6 +492,14 @@ export class CanvasRenderer {
                 mCtx.fillRect(c * cellW, r * cellH, Math.ceil(cellW), Math.ceil(cellH));
             }
         }
+
+        if (isCamp) {
+            CAMP_NPC_LIST.forEach(npc => {
+                mCtx.fillStyle = '#38bdf8';
+                mCtx.fillRect(npc.col * cellW - 1, npc.row * cellH - 1, 4, 4);
+            });
+        }
+
         mCtx.fillStyle = '#ffffff';
         mCtx.fillRect(player.col * cellW - 2, player.row * cellH - 2, 5, 5);
         mCtx.fillStyle = '#ef4444';
@@ -467,11 +530,13 @@ export class CanvasRenderer {
 
         this.ensurePortalsAndTentExist(currentMap);
 
-        // 更新玩家當前位置的探索迷霧 (持有提燈/火把時探索視野 +1)
+        const isCamp = isSafeCampMap(currentMap);
         const hasTorch = player.equipment?.includes('lantern') || player.equipment?.includes('torch_light') ||
                          (player.inventory?.['lantern'] || 0) > 0;
         const sightRadius = hasTorch ? 5 : 4;
-        this.updateFogOfWar(currentMap.id, player.row, player.col, sightRadius);
+        if (!isCamp) {
+            this.updateFogOfWar(currentMap.id, player.row, player.col, sightRadius);
+        }
         const exploredSet = this.exploredMaps[currentMap.id];
 
         const mapPixelW = mapCols * TILE_SIZE;
@@ -489,7 +554,6 @@ export class CanvasRenderer {
         this.cameraX = Math.max(minCamX, Math.min(maxCamX, targetCamX));
         this.cameraY = Math.max(minCamY, Math.min(maxCamY, targetCamY));
 
-        // 計算畫面震動偏移 (Screen Shake)
         let shakeOffsetX = 0;
         let shakeOffsetY = 0;
         if (this.shakeTimer > 0) {
@@ -522,7 +586,6 @@ export class CanvasRenderer {
 
                 const vHash = (r * 19 + c * 31) % 10;
 
-                // 1. 底層地形
                 if (currentMap.id === 'desert_ruins') {
                     if (tile === 0 || tile === 2 || tile === 30) {
                         this.ctx.fillStyle = '#e5b567';
@@ -565,7 +628,6 @@ export class CanvasRenderer {
                 else if (tile === 14) this.drawSprite('farm_ready', x, y);
                 else if (tile === 20) this.drawSprite('wood_floor', x, y);
 
-                // 2. 地面物件
                 if (tile === 1) {
                     if (vHash === 0 || vHash === 1) {
                         this.drawSprite('pine_tree', x, y);
@@ -633,11 +695,34 @@ export class CanvasRenderer {
                 else if (tile === 51) {
                     if (!this.drawSprite('obelisk', x, y)) this.drawPortalTile(x, y, gameTime);
                 }
+
+                if (!isCamp) {
+                    const distSq = (r - player.row) * (r - player.row) + (c - player.col) * (c - player.col);
+                    const isLandmark = [2, 6, 11, 30, 31, 32, 33, 34].includes(tile);
+                    const isExplored = exploredSet && exploredSet.has(`${r}_${c}`);
+
+                    if (!isExplored && !isLandmark) {
+                        this.ctx.fillStyle = 'rgba(11, 15, 25, 0.82)';
+                        this.ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+                        if ((r + c) % 2 === 0) {
+                            this.ctx.fillStyle = 'rgba(30, 41, 59, 0.35)';
+                            this.ctx.fillRect(x + 8, y + 16, 32, 12);
+                        }
+                    } else if (distSq > (sightRadius + 1) * (sightRadius + 1)) {
+                        this.ctx.fillStyle = 'rgba(15, 23, 42, 0.32)';
+                        this.ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+                    }
+                }
             }
         }
 
-        // 繪製玩家角色
-        const bobOffset = Math.sin(gameTime * 0.08) > 0 ? -2 : 0;
+        // 🌟 在安全基地營繪製 3 位實體駐守 NPC (位於 row: 6, col: 4 / 7 / 10，無論從左上或下方進入都一眼看見！)
+        if (isCamp) {
+            this.drawSafeCampNPCs(gameTime);
+        }
+
+        // 4. 繪製玩家角色
+        const bobOffset = Math.sin(gameTime * 0.08) > 0 ? -3 : 0;
         const px = player.col * TILE_SIZE;
         const py = player.row * TILE_SIZE;
 
@@ -658,7 +743,6 @@ export class CanvasRenderer {
             }
         }
 
-        // 5. 粒子特效
         for (let i = this.particles.length - 1; i >= 0; i--) {
             let pt = this.particles[i];
             pt.x += pt.vx;
@@ -672,7 +756,6 @@ export class CanvasRenderer {
             if (pt.life <= 0) this.particles.splice(i, 1);
         }
 
-        // 6. 浮動打擊文字特效
         for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
             const ft = this.floatingTexts[i];
             ft.y -= 0.8;
@@ -690,13 +773,11 @@ export class CanvasRenderer {
 
         this.ctx.restore();
 
-        // 7. 繪製日夜光影與動態火把照明圈
         const screenPlayerX = (player.col * TILE_SIZE + TILE_SIZE / 2) - this.cameraX;
         const screenPlayerY = (player.row * TILE_SIZE + TILE_SIZE / 2) - this.cameraY;
         this.renderDynamicLightingAndTorch(currentMap, player, screenPlayerX, screenPlayerY, gameTime);
 
-        // 8. 雨天屏幕雨絲特效
-        if (weather === 'RAIN') {
+        if (weather === 'RAIN' && !isCamp) {
             this.ctx.fillStyle = 'rgba(125, 211, 252, 0.55)';
             for (let i = 0; i < 32; i++) {
                 const rx = ((gameTime * 9 + i * 73) % this.canvas.width);
